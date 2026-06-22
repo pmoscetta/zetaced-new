@@ -1,0 +1,28 @@
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Query
+
+from auth_dependencies import AuthContext, get_auth_context
+from schemas.data import DataQueryParams, DataResponse
+from services.data import get_aligned_data
+
+router = APIRouter(tags=["data"])
+
+
+@router.get("/api/data", response_model=DataResponse)
+def get_data(
+    station_ids: list[int] = Query(default_factory=list),
+    sensor_ids: list[int] = Query(default_factory=list),
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    alignment_seconds: int = Query(default=60, ge=0, le=3600),
+    auth: AuthContext = Depends(get_auth_context),
+) -> DataResponse:
+    params = DataQueryParams(
+        station_ids=station_ids,
+        sensor_ids=sensor_ids,
+        date_from=date_from,
+        date_to=date_to,
+        alignment_seconds=alignment_seconds,
+    )
+    return get_aligned_data(auth.tenant, params)

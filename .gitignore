@@ -1,0 +1,8 @@
+.DS_Store
+.env
+__pycache__/
+.venv-smoke/
+frontend/node_modules/
+frontend/.next/
+configs_estratte.json
+configs_estratte.txt

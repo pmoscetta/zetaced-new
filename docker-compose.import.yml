@@ -1,0 +1,123 @@
+services:
+  zetaced-import:
+    image: python:3.12-slim
+    restart: "no"
+    environment:
+      SSH_HOST: ${SSH_HOST}
+      SSH_USER: ${SSH_USER}
+      SSH_PASSWORD: ${SSH_PASSWORD}
+      SSH_REMOTE_BASE_PATH: ${SSH_REMOTE_BASE_PATH}
+      MYSQL_REMOTE_HOST: ${MYSQL_REMOTE_HOST}
+      POSTGRES_HOST: zetaced-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        pip install --no-cache-dir paramiko "psycopg[binary]" &&
+        python - <<'PY'
+        import json, os, re, time
+        import paramiko, psycopg
+
+        start = time.time()
+        pats = {
+            "db_name": r'\$$database_name\s*=\s*["\']([^"\']+)["\']',
+            "db_user": r'\$$database_userid\s*=\s*["\']([^"\']+)["\']',
+            "db_password": r'\$$database_password\s*=\s*["\']([^"\']+)["\']',
+        }
+
+        def parse_cfg(content):
+            parsed = {}
+            for key, pattern in pats.items():
+                match = re.search(pattern, content)
+                parsed[key] = match.group(1) if match else None
+            return parsed
+
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(
+            os.environ["SSH_HOST"],
+            username=os.environ["SSH_USER"],
+            password=os.environ["SSH_PASSWORD"],
+        )
+        sftp = ssh.open_sftp()
+        configs = []
+        errors = []
+
+        try:
+            for client_dir in sorted(sftp.listdir(os.environ["SSH_REMOTE_BASE_PATH"])):
+                path = f'{os.environ["SSH_REMOTE_BASE_PATH"]}/{client_dir}/configuration.php'
+                try:
+                    with sftp.open(path, "r") as handle:
+                        content = handle.read().decode("utf-8", errors="ignore")
+                    parsed = parse_cfg(content)
+                    db_name = (parsed.get("db_name") or "").strip()
+                    db_user = (parsed.get("db_user") or "").strip()
+                    db_password = (parsed.get("db_password") or "").strip()
+                    if db_name and db_user and db_password:
+                        configs.append(
+                            (
+                                db_name,
+                                db_name,
+                                os.environ.get("MYSQL_REMOTE_HOST", "new.zetaced.com"),
+                                db_name,
+                                db_user,
+                                db_password,
+                            )
+                        )
+                    else:
+                        errors.append({"source_directory": client_dir, "reason": "config incompleta"})
+                except FileNotFoundError:
+                    errors.append({"source_directory": client_dir, "reason": "configuration.php non trovato"})
+                except Exception as exc:
+                    errors.append({"source_directory": client_dir, "reason": str(exc)})
+        finally:
+            sftp.close()
+            ssh.close()
+
+        conn = psycopg.connect(
+            host=os.environ["POSTGRES_HOST"],
+            port=os.environ["POSTGRES_PORT"],
+            dbname=os.environ["POSTGRES_DB"],
+            user=os.environ["POSTGRES_USER"],
+            password=os.environ["POSTGRES_PASSWORD"],
+        )
+
+        inserted = 0
+        updated = 0
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("CREATE TABLE IF NOT EXISTS clients (id SERIAL PRIMARY KEY, client_slug VARCHAR(100) UNIQUE NOT NULL, client_name VARCHAR(255), db_host VARCHAR(255) NOT NULL DEFAULT 'new.zetaced.com', db_name VARCHAR(100) NOT NULL, db_user VARCHAR(100) NOT NULL, db_password VARCHAR(255) NOT NULL, is_active BOOLEAN DEFAULT true, created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW());")
+                cur.execute("CREATE TABLE IF NOT EXISTS sync_log (id SERIAL PRIMARY KEY, sync_date TIMESTAMP DEFAULT NOW(), clients_found INTEGER, clients_added INTEGER, clients_updated INTEGER, errors TEXT, duration_ms INTEGER);")
+                for row in configs:
+                    cur.execute(
+                        "INSERT INTO clients (client_slug, client_name, db_host, db_name, db_user, db_password, is_active, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, true, NOW(), NOW()) ON CONFLICT (client_slug) DO UPDATE SET client_name = EXCLUDED.client_name, db_host = EXCLUDED.db_host, db_name = EXCLUDED.db_name, db_user = EXCLUDED.db_user, db_password = EXCLUDED.db_password, is_active = true, updated_at = NOW() RETURNING (xmax = 0) AS inserted;",
+                        row,
+                    )
+                    if cur.fetchone()[0]:
+                        inserted += 1
+                    else:
+                        updated += 1
+                cur.execute(
+                    "INSERT INTO sync_log (clients_found, clients_added, clients_updated, errors, duration_ms) VALUES (%s, %s, %s, %s, %s);",
+                    (
+                        len(configs),
+                        inserted,
+                        updated,
+                        json.dumps(errors, ensure_ascii=True) if errors else None,
+                        int((time.time() - start) * 1000),
+                    ),
+                )
+        conn.close()
+        print(f"Import completato: {len(configs)} configurazioni valide, {inserted} inserite, {updated} aggiornate, {len(errors)} errori/skip.")
+        PY
+    networks:
+      - traefik_proxy
+
+networks:
+  traefik_proxy:
+    external: true
+    name: n8n_default

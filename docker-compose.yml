@@ -1,0 +1,167 @@
+services:
+  zetaced-hello:
+    container_name: zetaced-hello
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    command:
+      - /bin/sh
+      - -c
+      - |
+        cat >/usr/share/nginx/html/index.html <<'EOF'
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>Zetaced Login</title>
+            <style>
+              body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #09111f; color: #f8fafc; font-family: Arial, sans-serif; padding: 2rem; }
+              section { width: 100%; max-width: 28rem; background: #111c30; border: 1px solid #24324a; border-radius: 1rem; padding: 2rem; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35); }
+              .eyebrow { color: #38bdf8; letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.875rem; }
+              h1 { margin: 0.75rem 0 0.5rem; font-size: 2rem; }
+              p { color: #cbd5e1; line-height: 1.6; }
+              form { display: grid; gap: 1rem; }
+              label { display: grid; gap: 0.45rem; font-weight: 600; }
+              input { border-radius: 0.75rem; border: 1px solid #334155; background: #0b1220; color: #f8fafc; padding: 0.9rem 1rem; font-size: 1rem; }
+              button { margin-top: 0.25rem; background: #0ea5e9; color: #08111d; border: none; border-radius: 0.75rem; padding: 0.9rem 1rem; font-size: 1rem; font-weight: 700; cursor: pointer; }
+              button:disabled { background: #1e293b; color: #94a3b8; cursor: not-allowed; }
+              .status { display: none; border-radius: 0.75rem; padding: 0.85rem 1rem; line-height: 1.5; }
+              .status.error { background: #3b1118; border: 1px solid #7f1d1d; color: #fecaca; }
+              .status.success { background: #052e1b; border: 1px solid #166534; color: #bbf7d0; }
+            </style>
+          </head>
+          <body>
+            <section>
+              <div class="eyebrow">zetaced.systea.cloud</div>
+              <h1>Environmental Monitoring</h1>
+              <p>Sign in with the client database name, username, and password from the legacy platform.</p>
+              <form id="login-form">
+                <label>Client<input id="client_slug" name="client_slug" placeholder="arno" autocomplete="organization" /></label>
+                <label>Username<input id="username" name="username" placeholder="operator" autocomplete="username" /></label>
+                <label>Password<input id="password" name="password" type="password" placeholder="Password" autocomplete="current-password" /></label>
+                <div id="error" class="status error"></div>
+                <div id="success" class="status success"></div>
+                <button id="submit" type="submit">Login</button>
+              </form>
+            </section>
+            <script>
+              const form = document.getElementById('login-form');
+              const client = document.getElementById('client_slug');
+              const username = document.getElementById('username');
+              const password = document.getElementById('password');
+              const submit = document.getElementById('submit');
+              const errorBox = document.getElementById('error');
+              const successBox = document.getElementById('success');
+              function showStatus(el, text) { el.textContent = text; el.style.display = text ? 'block' : 'none'; }
+              form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                showStatus(errorBox, '');
+                showStatus(successBox, '');
+                submit.disabled = true;
+                submit.textContent = 'Signing in...';
+                try {
+                  const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      client_slug: client.value.trim(),
+                      username: username.value.trim(),
+                      password: password.value
+                    })
+                  });
+                  const payload = await response.json();
+                  if (!response.ok) throw new Error(payload.detail || 'Login failed.');
+                  localStorage.setItem('zetaced_access_token', payload.access_token);
+                  localStorage.setItem('zetaced_client_name', payload.client_name);
+                  localStorage.setItem('zetaced_client_slug', client.value.trim());
+                  localStorage.setItem('zetaced_username', username.value.trim());
+                  password.value = '';
+                  showStatus(successBox, `Login successful for ${payload.client_name}. Token stored locally for the next application step.`);
+                } catch (error) {
+                  showStatus(errorBox, error instanceof Error ? error.message : 'Login failed.');
+                } finally {
+                  submit.disabled = false;
+                  submit.textContent = 'Login';
+                }
+              });
+            </script>
+          </body>
+        </html>
+        EOF
+        exec nginx -g 'daemon off;'
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=n8n_default
+      - traefik.http.routers.zetaced-hello.rule=Host(`zetaced.systea.cloud`)
+      - traefik.http.routers.zetaced-hello.priority=10
+      - traefik.http.routers.zetaced-hello.entrypoints=web,websecure
+      - traefik.http.routers.zetaced-hello.tls=true
+      - traefik.http.routers.zetaced-hello.tls.certresolver=mytlschallenge
+      - traefik.http.services.zetaced-hello.loadbalancer.server.port=80
+    networks:
+      - traefik_proxy
+
+  backend:
+    build:
+      context: ./backend
+    container_name: zetaced-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MYSQL_REMOTE_HOST: ${MYSQL_REMOTE_HOST}
+      MYSQL_REMOTE_PORT: ${MYSQL_REMOTE_PORT}
+      SSH_HOST: ${SSH_HOST}
+      SSH_USER: ${SSH_USER}
+      SSH_PASSWORD: ${SSH_PASSWORD}
+      SSH_REMOTE_BASE_PATH: ${SSH_REMOTE_BASE_PATH}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES}
+      APP_ENV: ${APP_ENV}
+      APP_NAME: ${APP_NAME}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=n8n_default
+      - traefik.http.routers.zetaced-api.rule=Host(`zetaced.systea.cloud`) && PathPrefix(`/api`)
+      - traefik.http.routers.zetaced-api.priority=100
+      - traefik.http.routers.zetaced-api.entrypoints=web,websecure
+      - traefik.http.routers.zetaced-api.tls=true
+      - traefik.http.routers.zetaced-api.tls.certresolver=mytlschallenge
+      - traefik.http.services.zetaced-api.loadbalancer.server.port=8000
+    networks:
+      - traefik_proxy
+      - internal
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: zetaced-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - traefik_proxy
+      - internal
+
+networks:
+  traefik_proxy:
+    external: true
+    name: n8n_default
+  internal:
+
+volumes:
+  postgres_data:
