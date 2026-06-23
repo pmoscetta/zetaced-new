@@ -126,6 +126,7 @@ export default function MapPage() {
                   style={{
                     display: "grid",
                     gap: "0.45rem",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))",
                   }}
                 >
                   {station.sensors.length === 0 ? (

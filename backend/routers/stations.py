@@ -20,7 +20,7 @@ router = APIRouter(tags=["stations"])
 
 @router.get("/api/stations", response_model=list[StationSummaryResponse])
 def get_stations(
-    view: Literal["map", "monitor"] = Query(default="monitor"),
+    view: Literal["map", "monitor", "results"] = Query(default="monitor"),
     auth: AuthContext = Depends(get_auth_context),
 ) -> list[StationSummaryResponse]:
     return list_stations_with_latest(auth.tenant, auth.user_level, view)

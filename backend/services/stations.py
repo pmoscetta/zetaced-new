@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -296,7 +296,7 @@ def _pick_latest_timestamp(
 
 def _combine_legacy_timestamp(
     raw_date: date | str | None,
-    raw_time: time | str | None,
+    raw_time: time | str | timedelta | None,
 ) -> datetime | None:
     if raw_date in (None, "0000-00-00") or raw_time in (None, "00:00:00"):
         return None
@@ -309,6 +309,12 @@ def _combine_legacy_timestamp(
 
         if isinstance(raw_time, str):
             parsed_time = datetime.strptime(raw_time, "%H:%M:%S").time()
+        elif isinstance(raw_time, timedelta):
+            total_seconds = int(raw_time.total_seconds())
+            hours = (total_seconds // 3600) % 24
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            parsed_time = time(hour=hours, minute=minutes, second=seconds)
         else:
             parsed_time = raw_time
 
