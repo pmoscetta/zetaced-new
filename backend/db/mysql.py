@@ -61,28 +61,41 @@ def get_station_longitude_column(connection: Connection) -> str:
     raise RuntimeError("Longitude column not found on dv_zetaced_station.")
 
 
-def verify_mysql_user(
+def get_mysql_user_record(
     tenant: dict[str, Any],
     username: str,
-    password: str,
-) -> bool:
-    password_hash = hashlib.md5(password.encode()).hexdigest()
-
+) -> dict[str, Any] | None:
     with open_tenant_mysql_connection(tenant) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT userid, password
+                SELECT userid, password, level
                 FROM dv_user
                 WHERE userid = %s
                 LIMIT 1
                 """,
                 (username,),
             )
-            record = cursor.fetchone()
+            return cursor.fetchone()
+
+
+def verify_mysql_user(
+    tenant: dict[str, Any],
+    username: str,
+    password: str,
+) -> dict[str, Any] | None:
+    password_hash = hashlib.md5(password.encode()).hexdigest()
+
+    record = get_mysql_user_record(tenant, username)
 
     if not record:
-        return False
+        return None
 
     stored_hash = (record.get("password") or "").strip().lower()
-    return stored_hash == password_hash
+    if stored_hash != password_hash:
+        return None
+
+    return {
+        "username": record.get("userid") or username,
+        "user_level": int(record.get("level") or 0),
+    }

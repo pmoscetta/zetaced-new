@@ -14,6 +14,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 @dataclass
 class AuthContext:
     username: str
+    user_level: int
     tenant: dict[str, Any]
 
 
@@ -40,7 +41,8 @@ def get_auth_context(
 
     client_slug = payload.get("client_slug")
     username = payload.get("username") or payload.get("sub")
-    if not client_slug or not username:
+    user_level = payload.get("user_level")
+    if not client_slug or not username or user_level is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid access token payload.",
@@ -59,4 +61,8 @@ def get_auth_context(
             detail="Client is inactive.",
         )
 
-    return AuthContext(username=username, tenant=tenant)
+    return AuthContext(
+        username=username,
+        user_level=int(user_level),
+        tenant=tenant,
+    )

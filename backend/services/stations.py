@@ -9,28 +9,74 @@ class StationNotFoundError(Exception):
     pass
 
 
-def list_sensor_types(tenant: dict[str, Any]) -> list[dict[str, Any]]:
+VISIBILITY_FIELDS = {
+    "map": "visible_on_map",
+    "monitor": "visible_on_monitor",
+    "results": "visible_on_results",
+}
+
+
+def list_sensor_types(
+    tenant: dict[str, Any],
+    user_level: int,
+    visibility_mode: str = "results",
+) -> list[dict[str, Any]]:
+    visibility_field = _get_visibility_field(visibility_mode)
+
     with open_tenant_mysql_connection(tenant) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, name
-                FROM dv_zetaced_sensor_type
-                ORDER BY name ASC, id ASC
+                SELECT
+                    sensor.sensor_id AS sensor_type_id,
+                    sensor.name AS sensor_label,
+                    sensor_type.name AS sensor_type_name,
+                    sensor.visible_on_map,
+                    sensor.visible_on_monitor,
+                    sensor.visible_on_results
+                FROM dv_zetaced_sensor AS sensor
+                LEFT JOIN dv_zetaced_sensor_type AS sensor_type
+                    ON sensor_type.id = sensor.sensor_id
+                ORDER BY sensor.sensor_id ASC, sensor.id ASC
                 """
             )
             rows = cursor.fetchall()
 
-    return [
-        {
-            "sensor_type_id": int(row["id"]),
-            "sensor_name": row["name"] or f"Sensor {row['id']}",
-        }
-        for row in rows
-    ]
+    sensors: list[dict[str, Any]] = []
+    seen_sensor_type_ids: set[int] = set()
+
+    for row in rows:
+        sensor_type_id = row.get("sensor_type_id")
+        if sensor_type_id is None:
+            continue
+
+        sensor_type_id_int = int(sensor_type_id)
+        if sensor_type_id_int in seen_sensor_type_ids:
+            continue
+
+        if not _is_visible_for_level(row.get(visibility_field), user_level):
+            continue
+
+        seen_sensor_type_ids.add(sensor_type_id_int)
+        sensors.append(
+            {
+                "sensor_type_id": sensor_type_id_int,
+                "sensor_name": row.get("sensor_label")
+                or row.get("sensor_type_name")
+                or f"Sensor {sensor_type_id_int}",
+            }
+        )
+
+    return sensors
 
 
-def list_stations_with_latest(tenant: dict[str, Any]) -> list[dict[str, Any]]:
+def list_stations_with_latest(
+    tenant: dict[str, Any],
+    user_level: int,
+    visibility_mode: str = "monitor",
+) -> list[dict[str, Any]]:
+    visibility_field = _get_visibility_field(visibility_mode)
+
     with open_tenant_mysql_connection(tenant) as connection:
         longitude_column = get_station_longitude_column(connection)
 
@@ -54,7 +100,10 @@ def list_stations_with_latest(tenant: dict[str, Any]) -> list[dict[str, Any]]:
                     sensor.last_value,
                     sensor.last_value_date,
                     sensor.last_value_time,
-                    sensor_type.name AS sensor_type_name
+                    sensor_type.name AS sensor_type_name,
+                    sensor.visible_on_map,
+                    sensor.visible_on_monitor,
+                    sensor.visible_on_results
                 FROM dv_zetaced_sensor AS sensor
                 LEFT JOIN dv_zetaced_sensor_type AS sensor_type
                     ON sensor_type.id = sensor.sensor_id
@@ -76,6 +125,9 @@ def list_stations_with_latest(tenant: dict[str, Any]) -> list[dict[str, Any]]:
     }
 
     for row in sensor_rows:
+        if not _is_visible_for_level(row.get(visibility_field), user_level):
+            continue
+
         station_id = int(row["station_id"])
         station = station_map.setdefault(
             station_id,
@@ -99,7 +151,14 @@ def list_stations_with_latest(tenant: dict[str, Any]) -> list[dict[str, Any]]:
     return list(station_map.values())
 
 
-def get_station_latest(tenant: dict[str, Any], station_id: int) -> dict[str, Any]:
+def get_station_latest(
+    tenant: dict[str, Any],
+    station_id: int,
+    user_level: int,
+    visibility_mode: str = "monitor",
+) -> dict[str, Any]:
+    visibility_field = _get_visibility_field(visibility_mode)
+
     with open_tenant_mysql_connection(tenant) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -126,7 +185,10 @@ def get_station_latest(tenant: dict[str, Any], station_id: int) -> dict[str, Any
                     sensor.last_value,
                     sensor.last_value_date,
                     sensor.last_value_time,
-                    sensor_type.name AS sensor_type_name
+                    sensor_type.name AS sensor_type_name,
+                    sensor.visible_on_map,
+                    sensor.visible_on_monitor,
+                    sensor.visible_on_results
                 FROM dv_zetaced_sensor AS sensor
                 LEFT JOIN dv_zetaced_sensor_type AS sensor_type
                     ON sensor_type.id = sensor.sensor_id
@@ -135,7 +197,11 @@ def get_station_latest(tenant: dict[str, Any], station_id: int) -> dict[str, Any
                 """,
                 (station_id,),
             )
-            sensor_rows = cursor.fetchall()
+            sensor_rows = [
+                row
+                for row in cursor.fetchall()
+                if _is_visible_for_level(row.get(visibility_field), user_level)
+            ]
 
     sensors = [_build_sensor_payload(row) for row in sensor_rows]
     latest_update = None
@@ -186,6 +252,31 @@ def _to_float(value: Any) -> float | None:
 
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_visibility_field(visibility_mode: str) -> str:
+    if visibility_mode not in VISIBILITY_FIELDS:
+        raise ValueError(f"Unsupported visibility mode: {visibility_mode}")
+
+    return VISIBILITY_FIELDS[visibility_mode]
+
+
+def _is_visible_for_level(raw_threshold: Any, user_level: int) -> bool:
+    threshold = _to_int(raw_threshold)
+    if threshold is None:
+        threshold = 1
+
+    return user_level >= threshold
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None
 

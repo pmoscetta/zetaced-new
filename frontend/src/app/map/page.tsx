@@ -32,7 +32,9 @@ export default function MapPage() {
     async function loadStations() {
       try {
         setError("");
-        const payload = await fetchProtectedJson<StationSummary[]>("/stations");
+        const payload = await fetchProtectedJson<StationSummary[]>(
+          "/stations?view=monitor"
+        );
         setStations(payload);
       } catch (caughtError) {
         setError(
@@ -136,7 +138,7 @@ export default function MapPage() {
                       No latest sensor data available.
                     </div>
                   ) : (
-                    station.sensors.slice(0, 6).map((sensor) => (
+                    station.sensors.map((sensor) => (
                       <div
                         key={`${station.station_id}-${sensor.sensor_id ?? sensor.sensor_name}`}
                         style={{

@@ -10,6 +10,7 @@ type LoginResponse = {
   access_token: string;
   token_type: string;
   client_name: string;
+  user_level: number;
 };
 
 type ErrorResponse = {
@@ -79,6 +80,7 @@ export default function LoginPage() {
         clientName: successPayload.client_name,
         clientSlug: normalizedClientSlug,
         username: normalizedUsername,
+        userLevel: successPayload.user_level,
       });
 
       setSuccess(`Login successful for ${successPayload.client_name}. Opening map...`);

@@ -11,3 +11,4 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     client_name: str
+    user_level: int

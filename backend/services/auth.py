@@ -44,12 +44,12 @@ def authenticate_user(login_data: LoginRequest) -> LoginResponse:
     if not tenant["is_active"]:
         raise InactiveTenantError()
 
-    is_valid = verify_mysql_user(
+    user = verify_mysql_user(
         tenant=tenant,
         username=login_data.username,
         password=login_data.password,
     )
-    if not is_valid:
+    if not user:
         raise InvalidCredentialsError()
 
     access_token = create_access_token(
@@ -57,9 +57,11 @@ def authenticate_user(login_data: LoginRequest) -> LoginResponse:
             "sub": login_data.username,
             "client_slug": tenant["client_slug"],
             "username": login_data.username,
+            "user_level": user["user_level"],
         }
     )
     return LoginResponse(
         access_token=access_token,
         client_name=tenant["client_name"] or tenant["client_slug"],
+        user_level=user["user_level"],
     )

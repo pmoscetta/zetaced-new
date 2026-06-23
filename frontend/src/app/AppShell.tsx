@@ -152,6 +152,7 @@ export default function AppShell({
             >
               <SessionPill label="Client" value={session.clientName} />
               <SessionPill label="User" value={session.username} />
+              <SessionPill label="Level" value={String(session.userLevel)} />
               <button
                 onClick={handleLogout}
                 style={{

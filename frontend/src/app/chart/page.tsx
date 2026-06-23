@@ -68,8 +68,8 @@ export default function ChartPage() {
               station_id: number;
               station_name: string;
             }>
-          >("/stations"),
-          fetchProtectedJson<SensorOption[]>("/sensors"),
+          >("/stations?view=results"),
+          fetchProtectedJson<SensorOption[]>("/sensors?view=results"),
         ]);
 
         const stationOptions = stationPayload.map((station) => ({

@@ -25,4 +25,4 @@ def get_data(
         date_to=date_to,
         alignment_seconds=alignment_seconds,
     )
-    return get_aligned_data(auth.tenant, params)
+    return get_aligned_data(auth.tenant, params, auth.user_level)

@@ -26,4 +26,4 @@ def get_chart(
         date_to=date_to,
         alignment_seconds=alignment_seconds,
     )
-    return get_chart_data(auth.tenant, params)
+    return get_chart_data(auth.tenant, params, auth.user_level)

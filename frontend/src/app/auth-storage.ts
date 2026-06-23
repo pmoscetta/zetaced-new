@@ -4,6 +4,7 @@ export type StoredSession = {
   clientName: string;
   clientSlug: string;
   username: string;
+  userLevel: number;
 };
 
 const storageKeys = {
@@ -12,6 +13,7 @@ const storageKeys = {
   clientName: "zetaced_client_name",
   clientSlug: "zetaced_client_slug",
   username: "zetaced_username",
+  userLevel: "zetaced_user_level",
 } as const;
 
 export function getStoredSession(): StoredSession | null {
@@ -23,10 +25,11 @@ export function getStoredSession(): StoredSession | null {
   const clientName = window.localStorage.getItem(storageKeys.clientName);
   const clientSlug = window.localStorage.getItem(storageKeys.clientSlug);
   const username = window.localStorage.getItem(storageKeys.username);
+  const rawUserLevel = window.localStorage.getItem(storageKeys.userLevel);
   const tokenType =
     window.localStorage.getItem(storageKeys.tokenType) ?? "bearer";
 
-  if (!accessToken || !clientName || !clientSlug || !username) {
+  if (!accessToken || !clientName || !clientSlug || !username || !rawUserLevel) {
     return null;
   }
 
@@ -36,6 +39,7 @@ export function getStoredSession(): StoredSession | null {
     clientName,
     clientSlug,
     username,
+    userLevel: Number(rawUserLevel),
   };
 }
 
@@ -49,6 +53,7 @@ export function storeSession(session: StoredSession) {
   window.localStorage.setItem(storageKeys.clientName, session.clientName);
   window.localStorage.setItem(storageKeys.clientSlug, session.clientSlug);
   window.localStorage.setItem(storageKeys.username, session.username);
+  window.localStorage.setItem(storageKeys.userLevel, String(session.userLevel));
 }
 
 export function clearStoredSession() {

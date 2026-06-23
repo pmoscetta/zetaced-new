@@ -7,12 +7,15 @@ from typing import Any
 from db.mysql import open_tenant_mysql_connection
 from schemas.data import DataQueryParams
 
+RESULTS_VISIBILITY_FIELD = "visible_on_results"
+
 
 def get_aligned_data(
     tenant: dict[str, Any],
     params: DataQueryParams,
+    user_level: int,
 ) -> dict[str, Any]:
-    raw_rows = _fetch_raw_rows(tenant, params)
+    raw_rows = _fetch_raw_rows(tenant, params, user_level)
     columns = _extract_columns(raw_rows)
     rows = _align_rows(raw_rows, params.alignment_seconds)
 
@@ -25,8 +28,9 @@ def get_aligned_data(
 def get_chart_data(
     tenant: dict[str, Any],
     params: DataQueryParams,
+    user_level: int,
 ) -> dict[str, Any]:
-    raw_rows = _fetch_raw_rows(tenant, params)
+    raw_rows = _fetch_raw_rows(tenant, params, user_level)
     series_map: dict[str, dict[str, Any]] = {}
 
     for row in raw_rows:
@@ -79,9 +83,10 @@ def get_chart_data(
 def _fetch_raw_rows(
     tenant: dict[str, Any],
     params: DataQueryParams,
+    user_level: int,
 ) -> list[dict[str, Any]]:
     with open_tenant_mysql_connection(tenant) as connection:
-        sensor_map = _fetch_sensor_instances(connection, params)
+        sensor_map = _fetch_sensor_instances(connection, params, user_level)
         if not sensor_map:
             return []
 
@@ -144,6 +149,7 @@ def _fetch_raw_rows(
 def _fetch_sensor_instances(
     connection: Any,
     params: DataQueryParams,
+    user_level: int,
 ) -> dict[int, dict[str, Any]]:
     sql = """
         SELECT
@@ -152,7 +158,8 @@ def _fetch_sensor_instances(
             station.name AS station_name,
             sensor.sensor_id AS sensor_type_id,
             sensor.name AS sensor_label,
-            sensor_type.name AS sensor_type_name
+            sensor_type.name AS sensor_type_name,
+            sensor.visible_on_results
         FROM dv_zetaced_sensor AS sensor
         LEFT JOIN dv_zetaced_station AS station
             ON station.id = sensor.station_id
@@ -192,6 +199,7 @@ def _fetch_sensor_instances(
         if row.get("sensor_instance_id") is not None
         and row.get("station_id") is not None
         and row.get("sensor_type_id") is not None
+        and _is_visible_for_level(row.get(RESULTS_VISIBILITY_FIELD), user_level)
     }
 
 
@@ -292,6 +300,24 @@ def _to_float(value: Any) -> float | None:
 
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_visible_for_level(raw_threshold: Any, user_level: int) -> bool:
+    threshold = _to_int(raw_threshold)
+    if threshold is None:
+        threshold = 1
+
+    return user_level >= threshold
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None
 
