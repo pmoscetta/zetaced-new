@@ -1,8 +1,9 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { APPLY_FILTERS_EVENT, type ChatFilters } from "../AIChatWidget";
 import AppShell from "../AppShell";
 import DateTimePickerField from "../DateTimePickerField";
 import PaginationControls from "../PaginationControls";
@@ -180,6 +181,52 @@ export default function DataPage() {
       alignmentSeconds
     );
   }
+
+  const applyChatFiltersRef = useRef<(filters: ChatFilters) => void>(() => {});
+  applyChatFiltersRef.current = (filters: ChatFilters) => {
+    const nextStationIds =
+      filters.station_ids.length > 0 ? filters.station_ids : selectedStationIds;
+    const nextSensorIds =
+      filters.sensor_ids.length > 0 ? filters.sensor_ids : selectedSensorIds;
+    const parsedFrom = filters.date_from ? new Date(filters.date_from) : null;
+    const parsedTo = filters.date_to ? new Date(filters.date_to) : null;
+    const nextDateFrom =
+      parsedFrom && !Number.isNaN(parsedFrom.getTime()) ? parsedFrom : dateFrom;
+    const nextDateTo =
+      parsedTo && !Number.isNaN(parsedTo.getTime()) ? parsedTo : dateTo;
+    const nextAlignment =
+      filters.alignment_seconds != null
+        ? String(filters.alignment_seconds)
+        : alignmentSeconds;
+
+    setSelectedStationIds(nextStationIds);
+    setSelectedSensorIds(nextSensorIds);
+    setDateFrom(nextDateFrom);
+    setDateTo(nextDateTo);
+    setAlignmentSeconds(nextAlignment);
+
+    void loadData(
+      nextStationIds,
+      nextSensorIds,
+      nextDateFrom,
+      nextDateTo,
+      nextAlignment
+    );
+  };
+
+  useEffect(() => {
+    function handleApplyFilters(event: Event) {
+      const custom = event as CustomEvent<ChatFilters>;
+      if (custom.detail) {
+        applyChatFiltersRef.current(custom.detail);
+      }
+    }
+
+    window.addEventListener(APPLY_FILTERS_EVENT, handleApplyFilters);
+    return () => {
+      window.removeEventListener(APPLY_FILTERS_EVENT, handleApplyFilters);
+    };
+  }, []);
 
   function openChartPopup() {
     if (!hasFilters) {

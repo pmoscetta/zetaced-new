@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 480
     jwt_algorithm: str = "HS256"
 
+    openrouter_api_key: str = ""
+    openrouter_model: str = "gpt-oss-120b:free"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
     app_env: str = "development"
     app_name: str = "Zetaced Monitoring"
 

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
+import AIChatWidget from "./AIChatWidget";
 import {
   clearStoredSession,
   getStoredSession,
@@ -243,6 +244,8 @@ export default function AppShell({
           {children}
         </section>
       </div>
+
+      <AIChatWidget />
     </main>
   );
 }
