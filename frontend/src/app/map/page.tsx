@@ -1,66 +1,138 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppShell from "../AppShell";
 import PageSection from "../PageSection";
 import { fetchProtectedJson } from "../protected-api";
+import {
+  formatCoordinate,
+  formatDateTime,
+  formatValue,
+  getStationCoordinates,
+  type StationSummary,
+} from "./map-utils";
 
-type StationSensor = {
-  sensor_id: number | null;
-  sensor_type_id: number | null;
-  sensor_name: string;
-  last_value: number | null;
-  last_update: string | null;
-};
-
-type StationSummary = {
-  station_id: number;
-  station_name: string;
-  latitude: number | null;
-  longitude: number | null;
-  latest_update: string | null;
-  sensors: StationSensor[];
-};
+const StationsLeafletMap = dynamic(() => import("./StationsLeafletMap"), {
+  ssr: false,
+  loading: () => <StateBox text="Preparing the interactive map..." />,
+});
 
 export default function MapPage() {
   const [stations, setStations] = useState<StationSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
+
+  const loadStations = useCallback(async (refresh = false) => {
+    try {
+      setError("");
+      if (refresh) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      const payload = await fetchProtectedJson<StationSummary[]>(
+        "/stations?view=monitor"
+      );
+      setStations(payload);
+      setLastLoadedAt(new Date().toISOString());
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Unable to load stations."
+      );
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    async function loadStations() {
-      try {
-        setError("");
-        const payload = await fetchProtectedJson<StationSummary[]>(
-          "/stations?view=monitor"
-        );
-        setStations(payload);
-      } catch (caughtError) {
-        setError(
-          caughtError instanceof Error
-            ? caughtError.message
-            : "Unable to load stations."
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    }
+    void loadStations();
 
-    loadStations();
-  }, []);
+    const refreshTimer = window.setInterval(() => {
+      void loadStations(true);
+    }, 60000);
+
+    return () => window.clearInterval(refreshTimer);
+  }, [loadStations]);
+
+  const mappedStationsCount = useMemo(
+    () => stations.filter((station) => getStationCoordinates(station)).length,
+    [stations]
+  );
+  const hiddenStationsCount = stations.length - mappedStationsCount;
 
   return (
     <AppShell
       title="Monitoring Map"
-      description="The first authenticated data view is now connected to the protected stations endpoint. A map layer can be added on top of the same payload next."
+      description="Interactive Leaflet map of the authenticated tenant stations with live sensor popups and automatic refresh every 60 seconds."
     >
       <PageSection
-        title="Station Overview"
-        description="This list is being loaded from `/api/stations` with the bearer token stored during login."
+        title="Station Map"
+        description="The map uses the same protected `/api/stations` payload and plots every station that has valid coordinates."
+        actions={
+          <button
+            onClick={() => void loadStations(true)}
+            disabled={isLoading || isRefreshing}
+            style={{
+              border: "1px solid #334155",
+              backgroundColor: isLoading || isRefreshing ? "#162235" : "#0b1220",
+              color: "#f8fafc",
+              borderRadius: "999px",
+              padding: "0.7rem 1rem",
+              fontSize: "0.95rem",
+              cursor: isLoading || isRefreshing ? "wait" : "pointer",
+            }}
+          >
+            {isRefreshing ? "Refreshing..." : "Refresh map"}
+          </button>
+        }
       >
         {isLoading ? (
           <StateBox text="Loading stations from the tenant database..." />
+        ) : error ? (
+          <StateBox text={error} tone="error" />
+        ) : stations.length === 0 ? (
+          <StateBox text="No stations were returned for this client." tone="muted" />
+        ) : (
+          <div style={{ display: "grid", gap: "1rem" }}>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "0.75rem",
+                color: "#cbd5e1",
+                fontSize: "0.95rem",
+              }}
+            >
+              <StatusPill label="Mapped" value={`${mappedStationsCount}/${stations.length}`} />
+              <StatusPill label="Hidden" value={String(hiddenStationsCount)} />
+              <StatusPill label="Last sync" value={formatDateTime(lastLoadedAt)} />
+            </div>
+
+            {hiddenStationsCount > 0 ? (
+              <StateBox
+                text={`${hiddenStationsCount} station${hiddenStationsCount === 1 ? "" : "s"} could not be placed on the map because latitude or longitude is missing.`}
+              />
+            ) : null}
+
+            <StationsLeafletMap stations={stations} />
+          </div>
+        )}
+      </PageSection>
+
+      <PageSection
+        title="Station Overview"
+        description="Cards remain available below the map for quick scanning of sensor values and timestamps."
+      >
+        {isLoading ? (
+          <StateBox text="Loading station cards..." />
         ) : error ? (
           <StateBox text={error} tone="error" />
         ) : stations.length === 0 ? (
@@ -212,31 +284,42 @@ function StateBox({ text, tone = "muted" }: StateBoxProps) {
   );
 }
 
-function formatCoordinate(value: number | null) {
-  if (value === null) {
-    return "n/a";
-  }
+type StatusPillProps = {
+  label: string;
+  value: string;
+};
 
-  return value.toFixed(5);
-}
-
-function formatValue(value: number | null) {
-  if (value === null) {
-    return "n/a";
-  }
-
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function formatDateTime(value: string | null) {
-  if (!value) {
-    return "n/a";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
+function StatusPill({ label, value }: StatusPillProps) {
+  return (
+    <div
+      style={{
+        backgroundColor: "#0b1220",
+        border: "1px solid #24324a",
+        borderRadius: "999px",
+        padding: "0.55rem 0.85rem",
+        display: "flex",
+        gap: "0.5rem",
+        alignItems: "center",
+      }}
+    >
+      <span
+        style={{
+          color: "#94a3b8",
+          fontSize: "0.8rem",
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          color: "#f8fafc",
+          fontWeight: 600,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
 }
