@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Brush,
   CartesianGrid,
   Line,
   LineChart,
@@ -52,7 +53,7 @@ type ChartRow = {
   [seriesKey: string]: string | number | null;
 };
 
-const DEFAULT_CHART_PAGE_SIZE = 500;
+const DEFAULT_CHART_PAGE_SIZE = 2000;
 const seriesColors = [
   "#38bdf8",
   "#22c55e",
@@ -74,9 +75,8 @@ export default function ChartPage() {
   const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [results, setResults] = useState<ChartResponse | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pointsPerPageInput, setPointsPerPageInput] = useState(
-    String(DEFAULT_CHART_PAGE_SIZE)
-  );
+  const [brushStartIndex, setBrushStartIndex] = useState(0);
+  const [brushEndIndex, setBrushEndIndex] = useState(0);
   const [hiddenSeriesKeys, setHiddenSeriesKeys] = useState<string[]>([]);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
@@ -185,15 +185,18 @@ export default function ChartPage() {
       (left, right) => new Date(left).getTime() - new Date(right).getTime()
     );
   }, [activeSeries]);
-  const pointsPerPage = parsePositiveInteger(
-    pointsPerPageInput,
-    DEFAULT_CHART_PAGE_SIZE
-  );
+  const pointsPerPage = DEFAULT_CHART_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(activeTimestamps.length / pointsPerPage));
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
   }, [totalPages]);
+
+  useEffect(() => {
+    const pageLength = Math.min(pointsPerPage, activeTimestamps.length);
+    setBrushStartIndex(0);
+    setBrushEndIndex(Math.max(0, pageLength - 1));
+  }, [activeTimestamps.length, currentPage, pointsPerPage]);
 
   const visibleTimestampKeys = useMemo(() => {
     const startIndex = (currentPage - 1) * pointsPerPage;
@@ -315,9 +318,34 @@ export default function ChartPage() {
     setCurrentPage((page) => Math.min(totalPages, page + 1));
   }
 
-  function handlePointsPerPageChange(value: string) {
-    setPointsPerPageInput(value);
-    setCurrentPage(1);
+  function handleBrushChange(range: { startIndex?: number; endIndex?: number }) {
+    if (range.startIndex !== undefined) setBrushStartIndex(range.startIndex);
+    if (range.endIndex !== undefined) setBrushEndIndex(range.endIndex);
+  }
+
+  function zoomIn() {
+    const span = brushEndIndex - brushStartIndex;
+    const newSpan = Math.max(9, Math.floor(span / 2));
+    const mid = Math.floor((brushStartIndex + brushEndIndex) / 2);
+    const newStart = Math.max(0, mid - Math.floor(newSpan / 2));
+    const newEnd = Math.min(chartRows.length - 1, newStart + newSpan);
+    setBrushStartIndex(newStart);
+    setBrushEndIndex(newEnd);
+  }
+
+  function zoomOut() {
+    const span = brushEndIndex - brushStartIndex;
+    const newSpan = Math.min(chartRows.length - 1, span * 2);
+    const mid = Math.floor((brushStartIndex + brushEndIndex) / 2);
+    const newStart = Math.max(0, mid - Math.floor(newSpan / 2));
+    const newEnd = Math.min(chartRows.length - 1, newStart + newSpan);
+    setBrushStartIndex(newStart);
+    setBrushEndIndex(newEnd);
+  }
+
+  function zoomReset() {
+    setBrushStartIndex(0);
+    setBrushEndIndex(Math.max(0, chartRows.length - 1));
   }
 
   function toggleSeries(seriesKey: string) {
@@ -445,43 +473,22 @@ export default function ChartPage() {
                 display: "flex",
                 flexWrap: "wrap",
                 alignItems: "center",
-                gap: "0.75rem",
+                gap: "0.65rem",
                 justifyContent: "flex-end",
               }}
             >
-              {popupMode ? (
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.55rem",
-                    color: "#cbd5e1",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  <span>Points per page</span>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={pointsPerPageInput}
-                    onChange={(event) => handlePointsPerPageChange(event.target.value)}
-                    style={{
-                      ...inputStyle,
-                      width: "7rem",
-                      padding: "0.55rem 0.75rem",
-                      fontSize: "0.9rem",
-                    }}
-                  />
-                </label>
+              <ZoomButton onClick={zoomIn} label="Zoom in +" />
+              <ZoomButton onClick={zoomOut} label="Zoom out −" />
+              <ZoomButton onClick={zoomReset} label="Reset" />
+              {totalPages > 1 ? (
+                <PaginationControls
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  summary={buildPageSummary(activeTimestamps.length, currentPage, pointsPerPage)}
+                  onPrevious={goToPreviousPage}
+                  onNext={goToNextPage}
+                />
               ) : null}
-              <PaginationControls
-                currentPage={currentPage}
-                totalPages={totalPages}
-                summary={buildPageSummary(activeTimestamps.length, currentPage, pointsPerPage)}
-                onPrevious={goToPreviousPage}
-                onNext={goToNextPage}
-              />
             </div>
           ) : null
         }
@@ -523,7 +530,7 @@ export default function ChartPage() {
                 <ResponsiveContainer width="100%" height="100%" debounce={150}>
                   <LineChart
                     data={chartRows}
-                    margin={{ top: 12, right: 24, left: 8, bottom: 24 }}
+                    margin={{ top: 12, right: 24, left: 8, bottom: 8 }}
                   >
                     <CartesianGrid stroke="#1f2b3f" strokeDasharray="3 3" />
                     <XAxis
@@ -557,9 +564,20 @@ export default function ChartPage() {
                         dot={false}
                         activeDot={{ r: 4 }}
                         isAnimationActive={false}
-                        connectNulls={false}
+                        connectNulls={true}
                       />
                     ))}
+                    <Brush
+                      dataKey="timestamp"
+                      height={28}
+                      stroke="#334155"
+                      fill="#0b1220"
+                      travellerWidth={8}
+                      startIndex={brushStartIndex}
+                      endIndex={brushEndIndex}
+                      onChange={handleBrushChange}
+                      tickFormatter={formatAxisTick}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -851,6 +869,27 @@ function buttonStyle(disabled: boolean): CSSProperties {
     fontWeight: 700,
     cursor: disabled ? "not-allowed" : "pointer",
   };
+}
+
+function ZoomButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        backgroundColor: "#162235",
+        color: "#cbd5e1",
+        border: "1px solid #334155",
+        borderRadius: "0.6rem",
+        padding: "0.55rem 0.85rem",
+        fontSize: "0.85rem",
+        fontWeight: 600,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
 }
 
 function buildChartRows(timestamps: string[], series: ChartSeries[]): ChartRow[] {
