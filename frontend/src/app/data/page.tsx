@@ -44,7 +44,7 @@ export default function DataPage() {
   const [selectedSensorIds, setSelectedSensorIds] = useState<number[]>([]);
   const [dateFrom, setDateFrom] = useState(getDefaultDateFrom());
   const [dateTo, setDateTo] = useState(getDefaultDateTo());
-  const [alignmentSeconds, setAlignmentSeconds] = useState("60");
+  const [alignmentSeconds, setAlignmentSeconds] = useState("300");
   const [results, setResults] = useState<DataResponse | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
@@ -132,7 +132,7 @@ export default function DataPage() {
       if (requestedDateTo) {
         params.set("date_to", new Date(requestedDateTo).toISOString());
       }
-      params.set("alignment_seconds", requestedAlignmentSeconds || "60");
+      params.set("alignment_seconds", requestedAlignmentSeconds || "300");
 
       const payload = await fetchProtectedJson<DataResponse>(
         `/data?${params.toString()}`
@@ -159,6 +159,36 @@ export default function DataPage() {
       dateFrom,
       dateTo,
       alignmentSeconds
+    );
+  }
+
+  function openChartPopup() {
+    if (!hasFilters) {
+      return;
+    }
+
+    const params = new URLSearchParams();
+    selectedStationIds.forEach((stationId) => {
+      params.append("station_ids", String(stationId));
+    });
+    selectedSensorIds.forEach((sensorId) => {
+      params.append("sensor_ids", String(sensorId));
+    });
+    if (dateFrom) {
+      params.set("date_from", new Date(dateFrom).toISOString());
+    }
+    if (dateTo) {
+      params.set("date_to", new Date(dateTo).toISOString());
+    }
+    params.set("alignment_seconds", alignmentSeconds || "300");
+    params.set("popup", "1");
+
+    const popupUrl = `/chart?${params.toString()}`;
+    const popupName = `zetaced-chart-${Date.now()}`;
+    window.open(
+      popupUrl,
+      popupName,
+      "popup=yes,width=1440,height=900,resizable=yes,scrollbars=yes"
     );
   }
 
@@ -257,6 +287,16 @@ export default function DataPage() {
       <PageSection
         title="Aligned Results"
         description="The table below groups readings by the selected alignment window and renders one column for each requested station and sensor combination."
+        actions={
+          <button
+            type="button"
+            onClick={openChartPopup}
+            disabled={!hasFilters || isBootstrapping || isLoadingResults}
+            style={buttonStyle(!hasFilters || isBootstrapping || isLoadingResults)}
+          >
+            Open chart window
+          </button>
+        }
       >
         {isBootstrapping ? (
           <StateBox text="Loading filter metadata..." />

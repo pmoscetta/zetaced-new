@@ -8,7 +8,7 @@ class DataQueryParams(BaseModel):
     sensor_ids: list[int] = Field(default_factory=list)
     date_from: datetime | None = None
     date_to: datetime | None = None
-    alignment_seconds: int = Field(default=60, ge=0, le=3600)
+    alignment_seconds: int = Field(default=300, ge=0, le=3600)
 
 
 class DataColumnResponse(BaseModel):

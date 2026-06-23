@@ -47,6 +47,7 @@ const seriesColors = [
 ];
 
 export default function ChartPage() {
+  const [popupMode, setPopupMode] = useState(false);
   const [stations, setStations] = useState<StationOption[]>([]);
   const [sensors, setSensors] = useState<SensorOption[]>([]);
   const [selectedStationIds, setSelectedStationIds] = useState<number[]>([]);
@@ -59,9 +60,35 @@ export default function ChartPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    async function loadMetadata() {
+    async function loadPage() {
       try {
         setError("");
+        const popupConfig = getPopupChartConfig();
+        if (popupConfig) {
+          setPopupMode(true);
+
+          setSelectedStationIds(popupConfig.stationIds);
+          setSelectedSensorIds(popupConfig.sensorIds);
+          setDateFrom(popupConfig.dateFrom);
+          setDateTo(popupConfig.dateTo);
+
+          if (popupConfig.stationIds.length === 0 || popupConfig.sensorIds.length === 0) {
+            setResults(null);
+            setError("Missing chart filters.");
+            return;
+          }
+
+          await loadChart(
+            popupConfig.stationIds,
+            popupConfig.sensorIds,
+            popupConfig.dateFrom,
+            popupConfig.dateTo
+          );
+          return;
+        }
+
+        setPopupMode(false);
+
         const [stationPayload, sensorPayload] = await Promise.all([
           fetchProtectedJson<
             Array<{
@@ -104,7 +131,7 @@ export default function ChartPage() {
       }
     }
 
-    loadMetadata();
+    loadPage();
   }, []);
 
   const visibleSeries = useMemo(() => results?.series ?? [], [results]);
@@ -162,101 +189,111 @@ export default function ChartPage() {
 
   return (
     <AppShell
-      title="Charts"
-      description="This screen now consumes the protected `/api/chart` endpoint and renders a lightweight live chart without adding a chart library yet."
+      title={popupMode ? "Chart Window" : "Charts"}
+      description={
+        popupMode
+          ? "This popup charts the current selection opened from DATA. You can open multiple chart windows to compare different selections."
+          : "This screen now consumes the protected `/api/chart` endpoint and renders a lightweight live chart without adding a chart library yet."
+      }
     >
-      <PageSection
-        title="Chart Filters"
-        description="The default chart uses one station, three sensors, and the last 24 hours so we can validate the real chart flow on live tenant data."
-      >
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            display: "grid",
-            gap: "1rem",
-          }}
+      {!popupMode ? (
+        <PageSection
+          title="Chart Filters"
+          description="The default chart uses one station, three sensors, and the last 24 hours so we can validate the real chart flow on live tenant data."
         >
-          <div
+          <form
+            onSubmit={handleSubmit}
             style={{
               display: "grid",
               gap: "1rem",
-              gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
             }}
           >
-            <MultiSelectField
-              label="Stations"
-              options={stations.map((station) => ({
-                value: station.station_id,
-                label: station.station_name,
-              }))}
-              value={selectedStationIds}
-              onChange={setSelectedStationIds}
-              disabled={isBootstrapping}
-            />
-            <MultiSelectField
-              label="Sensors"
-              options={sensors.map((sensor) => ({
-                value: sensor.sensor_type_id,
-                label: sensor.sensor_name,
-              }))}
-              value={selectedSensorIds}
-              onChange={setSelectedSensorIds}
-              disabled={isBootstrapping}
-            />
-            <Field
-              label="From"
-              type="datetime-local"
-              value={dateFrom}
-              onChange={setDateFrom}
-            />
-            <Field
-              label="To"
-              type="datetime-local"
-              value={dateTo}
-              onChange={setDateTo}
-            />
-          </div>
+            <div
+              style={{
+                display: "grid",
+                gap: "1rem",
+                gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
+              }}
+            >
+              <MultiSelectField
+                label="Stations"
+                options={stations.map((station) => ({
+                  value: station.station_id,
+                  label: station.station_name,
+                }))}
+                value={selectedStationIds}
+                onChange={setSelectedStationIds}
+                disabled={isBootstrapping}
+              />
+              <MultiSelectField
+                label="Sensors"
+                options={sensors.map((sensor) => ({
+                  value: sensor.sensor_type_id,
+                  label: sensor.sensor_name,
+                }))}
+                value={selectedSensorIds}
+                onChange={setSelectedSensorIds}
+                disabled={isBootstrapping}
+              />
+              <Field
+                label="From"
+                type="datetime-local"
+                value={dateFrom}
+                onChange={setDateFrom}
+              />
+              <Field
+                label="To"
+                type="datetime-local"
+                value={dateTo}
+                onChange={setDateTo}
+              />
+            </div>
 
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: "0.75rem",
-            }}
-          >
-            <button
-              type="submit"
-              disabled={
-                selectedStationIds.length === 0 ||
-                selectedSensorIds.length === 0 ||
-                isBootstrapping ||
-                isLoadingResults
-              }
-              style={buttonStyle(
-                selectedStationIds.length === 0 ||
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "0.75rem",
+              }}
+            >
+              <button
+                type="submit"
+                disabled={
+                  selectedStationIds.length === 0 ||
                   selectedSensorIds.length === 0 ||
                   isBootstrapping ||
                   isLoadingResults
-              )}
-            >
-              {isLoadingResults ? "Loading chart..." : "Load chart"}
-            </button>
-            <span
-              style={{
-                color: "#94a3b8",
-                fontSize: "0.95rem",
-              }}
-            >
-              Current result: {visibleSeries.length} series
-            </span>
-          </div>
-        </form>
-      </PageSection>
+                }
+                style={buttonStyle(
+                  selectedStationIds.length === 0 ||
+                    selectedSensorIds.length === 0 ||
+                    isBootstrapping ||
+                    isLoadingResults
+                )}
+              >
+                {isLoadingResults ? "Loading chart..." : "Load chart"}
+              </button>
+              <span
+                style={{
+                  color: "#94a3b8",
+                  fontSize: "0.95rem",
+                }}
+              >
+                Current result: {visibleSeries.length} series
+              </span>
+            </div>
+          </form>
+        </PageSection>
+      ) : null}
 
       <PageSection
         title="Chart Preview"
-        description="Each line represents one station and sensor combination returned by `/api/chart`."
+        description={
+          popupMode
+            ? "This window renders the chart for the filters selected in DATA."
+            : "Each line represents one station and sensor combination returned by `/api/chart`."
+        }
       >
         {isBootstrapping ? (
           <StateBox text="Loading chart filters..." />
@@ -599,4 +636,52 @@ function toDateTimeLocalValue(value: Date) {
   const offset = value.getTimezoneOffset();
   const localValue = new Date(value.getTime() - offset * 60 * 1000);
   return localValue.toISOString().slice(0, 16);
+}
+
+function getPopupChartConfig():
+  | {
+      stationIds: number[];
+      sensorIds: number[];
+      dateFrom: string;
+      dateTo: string;
+    }
+  | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  if (searchParams.get("popup") !== "1") {
+    return null;
+  }
+
+  return {
+    stationIds: searchParams
+      .getAll("station_ids")
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value)),
+    sensorIds: searchParams
+      .getAll("sensor_ids")
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value)),
+    dateFrom:
+      toDateTimeLocalValueFromIso(searchParams.get("date_from")) ??
+      getDefaultDateFrom(),
+    dateTo:
+      toDateTimeLocalValueFromIso(searchParams.get("date_to")) ??
+      getDefaultDateTo(),
+  };
+}
+
+function toDateTimeLocalValueFromIso(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return toDateTimeLocalValue(date);
 }

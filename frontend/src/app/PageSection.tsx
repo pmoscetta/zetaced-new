@@ -3,12 +3,14 @@ import type { ReactNode } from "react";
 type PageSectionProps = {
   title: string;
   description?: string;
+  actions?: ReactNode;
   children: ReactNode;
 };
 
 export default function PageSection({
   title,
   description,
+  actions,
   children,
 }: PageSectionProps) {
   return (
@@ -20,14 +22,25 @@ export default function PageSection({
         padding: "1.25rem",
       }}
     >
-      <h2
+      <div
         style={{
-          margin: 0,
-          fontSize: "1.15rem",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "0.75rem",
         }}
       >
-        {title}
-      </h2>
+        <h2
+          style={{
+            margin: 0,
+            fontSize: "1.15rem",
+          }}
+        >
+          {title}
+        </h2>
+        {actions ? <div>{actions}</div> : null}
+      </div>
       {description ? (
         <p
           style={{

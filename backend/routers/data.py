@@ -15,7 +15,7 @@ def get_data(
     sensor_ids: list[int] = Query(default_factory=list),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    alignment_seconds: int = Query(default=60, ge=0, le=3600),
+    alignment_seconds: int = Query(default=300, ge=0, le=3600),
     auth: AuthContext = Depends(get_auth_context),
 ) -> DataResponse:
     params = DataQueryParams(

@@ -20,7 +20,6 @@ type AppShellProps = {
 const navItems = [
   { href: "/map", label: "Map" },
   { href: "/data", label: "Data" },
-  { href: "/chart", label: "Chart" },
   { href: "/alarms", label: "Log / Alarms" },
 ];
 
@@ -48,6 +47,10 @@ export default function AppShell({
   }, [router]);
 
   const activeItemLabel = useMemo(() => {
+    if (pathname === "/chart") {
+      return "Chart";
+    }
+
     return navItems.find((item) => item.href === pathname)?.label ?? "Workspace";
   }, [pathname]);
 
