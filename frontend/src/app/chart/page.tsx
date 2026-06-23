@@ -1,7 +1,16 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { APPLY_FILTERS_EVENT, type ChatFilters } from "../AIChatWidget";
 import AppShell from "../AppShell";
@@ -38,9 +47,9 @@ type ChartResponse = {
   series: ChartSeries[];
 };
 
-type CrosshairState = {
+type ChartRow = {
   timestamp: string;
-  x: number;
+  [seriesKey: string]: string | number | null;
 };
 
 const DEFAULT_CHART_PAGE_SIZE = 500;
@@ -68,7 +77,7 @@ export default function ChartPage() {
   const [pointsPerPageInput, setPointsPerPageInput] = useState(
     String(DEFAULT_CHART_PAGE_SIZE)
   );
-  const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
+  const [hiddenSeriesKeys, setHiddenSeriesKeys] = useState<string[]>([]);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
@@ -148,13 +157,17 @@ export default function ChartPage() {
       }
     }
 
-    loadPage();
+    void loadPage();
   }, []);
 
   const allSeries = useMemo(() => results?.series ?? [], [results]);
-  const allTimestamps = useMemo(() => {
+  const activeSeries = useMemo(
+    () => allSeries.filter((series) => !hiddenSeriesKeys.includes(series.series_key)),
+    [allSeries, hiddenSeriesKeys]
+  );
+  const activeTimestamps = useMemo(() => {
     const uniqueTimestamps = new Set<string>();
-    for (const series of allSeries) {
+    for (const series of activeSeries) {
       for (const point of series.points) {
         uniqueTimestamps.add(point.timestamp);
       }
@@ -163,31 +176,36 @@ export default function ChartPage() {
     return Array.from(uniqueTimestamps).sort(
       (left, right) => new Date(left).getTime() - new Date(right).getTime()
     );
-  }, [allSeries]);
+  }, [activeSeries]);
   const pointsPerPage = parsePositiveInteger(
     pointsPerPageInput,
     DEFAULT_CHART_PAGE_SIZE
   );
-  const totalPages = Math.max(1, Math.ceil(allTimestamps.length / pointsPerPage));
+  const totalPages = Math.max(1, Math.ceil(activeTimestamps.length / pointsPerPage));
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
   const visibleTimestampKeys = useMemo(() => {
     const startIndex = (currentPage - 1) * pointsPerPage;
-    return allTimestamps.slice(startIndex, startIndex + pointsPerPage);
-  }, [allTimestamps, currentPage, pointsPerPage]);
+    return activeTimestamps.slice(startIndex, startIndex + pointsPerPage);
+  }, [activeTimestamps, currentPage, pointsPerPage]);
   const visibleTimestampSet = useMemo(
     () => new Set(visibleTimestampKeys),
     [visibleTimestampKeys]
   );
-  const visibleSeries = useMemo(() => {
-    return allSeries
+  const pagedSeries = useMemo(() => {
+    return activeSeries
       .map((series) => ({
         ...series,
         points: series.points.filter((point) => visibleTimestampSet.has(point.timestamp)),
       }))
       .filter((series) => series.points.length > 0);
-  }, [allSeries, visibleTimestampSet]);
-  const chartGeometry = useMemo(
-    () => buildChartGeometry(visibleSeries, visibleTimestampKeys),
-    [visibleSeries, visibleTimestampKeys]
+  }, [activeSeries, visibleTimestampSet]);
+  const chartRows = useMemo(
+    () => buildChartRows(visibleTimestampKeys, pagedSeries),
+    [visibleTimestampKeys, pagedSeries]
   );
 
   async function loadChart(
@@ -199,6 +217,7 @@ export default function ChartPage() {
     if (stationIds.length === 0 || sensorIds.length === 0) {
       setResults(null);
       setCurrentPage(1);
+      setHiddenSeriesKeys([]);
       return;
     }
 
@@ -223,10 +242,12 @@ export default function ChartPage() {
         `/chart?${params.toString()}`
       );
       setResults(payload);
+      setHiddenSeriesKeys([]);
       setCurrentPage(1);
       setError("");
     } catch (caughtError) {
       setResults(null);
+      setHiddenSeriesKeys([]);
       setCurrentPage(1);
       setError(
         caughtError instanceof Error
@@ -260,7 +281,6 @@ export default function ChartPage() {
     setSelectedSensorIds(nextSensorIds);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
-    setCrosshair(null);
 
     void loadChart(nextStationIds, nextSensorIds, nextDateFrom, nextDateTo);
   };
@@ -280,38 +300,30 @@ export default function ChartPage() {
   }, []);
 
   function goToPreviousPage() {
-    setCrosshair(null);
     setCurrentPage((page) => Math.max(1, page - 1));
   }
 
   function goToNextPage() {
-    setCrosshair(null);
     setCurrentPage((page) => Math.min(totalPages, page + 1));
   }
 
   function handlePointsPerPageChange(value: string) {
     setPointsPerPageInput(value);
-    setCrosshair(null);
     setCurrentPage(1);
   }
 
-  function handlePlotMouseMove(event: React.MouseEvent<SVGRectElement>) {
-    const svgElement = event.currentTarget.ownerSVGElement;
-    if (!svgElement || chartGeometry.timestampX.length === 0) {
-      return;
-    }
-
-    const rect = svgElement.getBoundingClientRect();
-    const pointerX =
-      ((event.clientX - rect.left) / rect.width) * chartGeometry.width;
-    const nearest = chartGeometry.timestampX.reduce((closest, candidate) =>
-      Math.abs(candidate.x - pointerX) < Math.abs(closest.x - pointerX)
-        ? candidate
-        : closest
+  function toggleSeries(seriesKey: string) {
+    setCurrentPage(1);
+    setHiddenSeriesKeys((current) =>
+      current.includes(seriesKey)
+        ? current.filter((entry) => entry !== seriesKey)
+        : [...current, seriesKey]
     );
-
-    setCrosshair({ timestamp: nearest.timestamp, x: nearest.x });
   }
+
+  const hasSeries = allSeries.length > 0;
+  const hasEnabledSeries = activeSeries.length > 0;
+  const hasPagedPoints = pagedSeries.length > 0 && chartRows.length > 0;
 
   return (
     <AppShell
@@ -319,7 +331,7 @@ export default function ChartPage() {
       description={
         popupMode
           ? "This popup charts the current selection opened from DATA. You can open multiple chart windows to compare different selections."
-          : "This screen now consumes the protected `/api/chart` endpoint and renders a lightweight live chart without adding a chart library yet."
+          : "This screen consumes the protected `/api/chart` endpoint and now renders the chart with Recharts for responsive multi-series exploration."
       }
     >
       {!popupMode ? (
@@ -404,7 +416,7 @@ export default function ChartPage() {
                   fontSize: "0.95rem",
                 }}
               >
-                Current result: {allSeries.length} series, {allTimestamps.length} timestamps
+                Current result: {allSeries.length} series, {activeTimestamps.length} timestamps
               </span>
             </div>
           </form>
@@ -416,10 +428,10 @@ export default function ChartPage() {
         description={
           popupMode
             ? "This window renders the chart for the filters selected in DATA."
-            : "Each line represents one station and sensor combination returned by `/api/chart`."
+            : "Each line is now rendered by Recharts and each sensor card below can enable or disable the plotted curve in real time."
         }
         actions={
-          visibleSeries.length > 0 ? (
+          hasEnabledSeries ? (
             <div
               style={{
                 display: "flex",
@@ -458,7 +470,7 @@ export default function ChartPage() {
               <PaginationControls
                 currentPage={currentPage}
                 totalPages={totalPages}
-                summary={buildPageSummary(allTimestamps.length, currentPage, pointsPerPage)}
+                summary={buildPageSummary(activeTimestamps.length, currentPage, pointsPerPage)}
                 onPrevious={goToPreviousPage}
                 onNext={goToNextPage}
               />
@@ -472,8 +484,12 @@ export default function ChartPage() {
           <StateBox text={error} tone="error" />
         ) : !results ? (
           <StateBox text="Choose at least one station and one sensor, then load the chart." />
-        ) : visibleSeries.length === 0 ? (
+        ) : !hasSeries ? (
           <StateBox text="No chart points were returned for the current filter set." />
+        ) : !hasEnabledSeries ? (
+          <StateBox text="All sensor series are disabled. Re-enable at least one checkbox below to plot the chart again." />
+        ) : !hasPagedPoints ? (
+          <StateBox text="No chart points fall inside the current page window." />
         ) : (
           <div
             style={{
@@ -487,125 +503,58 @@ export default function ChartPage() {
                 border: "1px solid #24324a",
                 borderRadius: "0.85rem",
                 padding: "1rem",
-                overflowX: "auto",
               }}
             >
-              <svg
-                viewBox={`0 0 ${chartGeometry.width} ${chartGeometry.height}`}
+              <div
                 style={{
                   width: "100%",
-                  minWidth: "42rem",
                   height: "24rem",
-                  display: "block",
+                  minWidth: 0,
                 }}
               >
-                <rect
-                  x="0"
-                  y="0"
-                  width={chartGeometry.width}
-                  height={chartGeometry.height}
-                  fill="#0b1220"
-                />
-                {chartGeometry.gridLines.map((line) => (
-                  <line
-                    key={line.key}
-                    x1={line.x1}
-                    y1={line.y1}
-                    x2={line.x2}
-                    y2={line.y2}
-                    stroke="#1f2b3f"
-                    strokeWidth="1"
-                  />
-                ))}
-
-                {chartGeometry.xTicks.map((tick) => (
-                  <g key={tick.key} pointerEvents="none">
-                    <line
-                      x1={tick.x}
-                      y1={chartGeometry.plotTop}
-                      x2={tick.x}
-                      y2={chartGeometry.plotBottom}
-                      stroke="#16202f"
-                      strokeWidth="1"
+                <ResponsiveContainer width="100%" height="100%" debounce={150}>
+                  <LineChart
+                    data={chartRows}
+                    margin={{ top: 12, right: 24, left: 8, bottom: 24 }}
+                  >
+                    <CartesianGrid stroke="#1f2b3f" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={formatAxisTick}
+                      minTickGap={28}
+                      tick={{ fill: "#94a3b8", fontSize: 11 }}
+                      stroke="#334155"
                     />
-                    <text
-                      x={tick.x}
-                      y={chartGeometry.plotBottom + 16}
-                      fill="#94a3b8"
-                      fontSize="10"
-                      textAnchor="middle"
-                    >
-                      {tick.dateLabel}
-                    </text>
-                    <text
-                      x={tick.x}
-                      y={chartGeometry.plotBottom + 30}
-                      fill="#94a3b8"
-                      fontSize="10"
-                      textAnchor="middle"
-                    >
-                      {tick.timeLabel}
-                    </text>
-                  </g>
-                ))}
-
-                {chartGeometry.series.map((series) => (
-                  <path
-                    key={series.series_key}
-                    d={series.path}
-                    fill="none"
-                    stroke={seriesColors[series.colorIndex % seriesColors.length]}
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                ))}
-
-                {crosshair ? (
-                  <g pointerEvents="none">
-                    <line
-                      x1={crosshair.x}
-                      y1={chartGeometry.plotTop}
-                      x2={crosshair.x}
-                      y2={chartGeometry.plotBottom}
-                      stroke="#64748b"
-                      strokeWidth="1"
-                      strokeDasharray="4 4"
+                    {pagedSeries.map((series) => (
+                      <YAxis
+                        key={series.series_key}
+                        yAxisId={series.series_key}
+                        hide
+                        domain={buildSeriesDomain(series.points)}
+                      />
+                    ))}
+                    <RechartsTooltip
+                      content={<ChartTooltip />}
+                      cursor={{ stroke: "#64748b", strokeDasharray: "4 4" }}
                     />
-                    {chartGeometry.series.map((series) => {
-                      const point = series.pointByTimestamp[crosshair.timestamp];
-                      if (!point) {
-                        return null;
-                      }
-                      return (
-                        <circle
-                          key={series.series_key}
-                          cx={point.x}
-                          cy={point.y}
-                          r="4.5"
-                          fill={seriesColors[series.colorIndex % seriesColors.length]}
-                          stroke="#f8fafc"
-                          strokeWidth="1.5"
-                        />
-                      );
-                    })}
-                    <CrosshairTooltip
-                      crosshair={crosshair}
-                      geometry={chartGeometry}
-                    />
-                  </g>
-                ) : null}
-
-                <rect
-                  x={chartGeometry.plotLeft}
-                  y={chartGeometry.plotTop}
-                  width={chartGeometry.plotRight - chartGeometry.plotLeft}
-                  height={chartGeometry.plotBottom - chartGeometry.plotTop}
-                  fill="transparent"
-                  onMouseMove={handlePlotMouseMove}
-                  onMouseLeave={() => setCrosshair(null)}
-                />
-              </svg>
+                    {pagedSeries.map((series, index) => (
+                      <Line
+                        key={series.series_key}
+                        yAxisId={series.series_key}
+                        dataKey={series.series_key}
+                        name={`${series.station_name} - ${series.sensor_name}`}
+                        type="monotone"
+                        stroke={seriesColors[index % seriesColors.length]}
+                        strokeWidth={2.5}
+                        dot={false}
+                        activeDot={{ r: 4 }}
+                        isAnimationActive={false}
+                        connectNulls={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
             </div>
 
             <div
@@ -615,76 +564,107 @@ export default function ChartPage() {
                 gridTemplateColumns: "repeat(auto-fit, minmax(16rem, 1fr))",
               }}
             >
-              {visibleSeries.map((series, index) => (
-                <div
-                  key={series.series_key}
-                  style={{
-                    backgroundColor: "#111c30",
-                    border: "1px solid #24324a",
-                    borderRadius: "0.85rem",
-                    padding: "1rem",
-                    display: "grid",
-                    gap: "0.5rem",
-                  }}
-                >
-                  <div
+              {allSeries.map((series) => {
+                const isEnabled = !hiddenSeriesKeys.includes(series.series_key);
+                const visibleSeriesEntry = pagedSeries.find(
+                  (entry) => entry.series_key === series.series_key
+                );
+                const colorIndex = allSeries.findIndex(
+                  (entry) => entry.series_key === series.series_key
+                );
+
+                return (
+                  <label
+                    key={series.series_key}
                     style={{
-                      display: "flex",
-                      alignItems: "center",
+                      backgroundColor: isEnabled ? "#111c30" : "#0b1220",
+                      border: `1px solid ${isEnabled ? "#24324a" : "#1f2b3f"}`,
+                      borderRadius: "0.85rem",
+                      padding: "1rem",
+                      display: "grid",
                       gap: "0.6rem",
+                      cursor: "pointer",
+                      opacity: isEnabled ? 1 : 0.7,
                     }}
                   >
-                    <span
+                    <div
                       style={{
-                        width: "0.9rem",
-                        height: "0.9rem",
-                        borderRadius: "999px",
-                        backgroundColor: seriesColors[index % seriesColors.length],
-                        display: "inline-block",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "0.75rem",
                       }}
-                    />
-                    <strong>{series.station_name}</strong>
-                  </div>
-                  <div style={{ color: "#cbd5e1" }}>{series.sensor_name}</div>
-                  <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
-                    Points on page: {series.points.length}
-                  </div>
-                  <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
-                    Range on page: {formatSeriesRange(series.points)}
-                  </div>
-                </div>
-              ))}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.65rem",
+                          minWidth: 0,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: "0.9rem",
+                            height: "0.9rem",
+                            borderRadius: "999px",
+                            backgroundColor: seriesColors[colorIndex % seriesColors.length],
+                            display: "inline-block",
+                            flexShrink: 0,
+                          }}
+                        />
+                        <div style={{ minWidth: 0 }}>
+                          <strong
+                            style={{
+                              display: "block",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {series.station_name}
+                          </strong>
+                          <div
+                            style={{
+                              color: "#cbd5e1",
+                              marginTop: "0.15rem",
+                            }}
+                          >
+                            {series.sensor_name}
+                          </div>
+                        </div>
+                      </div>
+
+                      <input
+                        type="checkbox"
+                        checked={isEnabled}
+                        onChange={() => toggleSeries(series.series_key)}
+                        style={{
+                          width: "1rem",
+                          height: "1rem",
+                          accentColor: "#0ea5e9",
+                          flexShrink: 0,
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
+                      Points on page: {visibleSeriesEntry?.points.length ?? 0}
+                    </div>
+                    <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
+                      Range on page: {formatSeriesRange(visibleSeriesEntry?.points ?? [])}
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: "0.82rem" }}>
+                      {isEnabled ? "Visible on chart" : "Hidden from chart"}
+                    </div>
+                  </label>
+                );
+              })}
             </div>
           </div>
         )}
       </PageSection>
     </AppShell>
-  );
-}
-
-type FieldProps = {
-  label: string;
-  type: string;
-  value: string;
-  onChange: (value: string) => void;
-};
-
-function Field({ label, type, value, onChange }: FieldProps) {
-  return (
-    <label
-      style={{
-        display: "grid",
-        gap: "0.45rem",
-      }}
-    >
-      <span style={{ fontWeight: 600 }}>{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        style={inputStyle}
-      />
-    </label>
   );
 }
 
@@ -771,6 +751,80 @@ function StateBox({ text, tone = "muted" }: StateBoxProps) {
   );
 }
 
+type ChartTooltipProps = {
+  active?: boolean;
+  label?: string;
+  payload?: Array<{
+    name?: string;
+    value?: number | string | null;
+    color?: string;
+  }>;
+};
+
+function ChartTooltip({ active, label, payload }: ChartTooltipProps) {
+  if (!active || !payload || payload.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        backgroundColor: "#08111d",
+        border: "1px solid #334155",
+        borderRadius: "0.8rem",
+        padding: "0.75rem 0.85rem",
+        color: "#e2e8f0",
+        minWidth: "14rem",
+        boxShadow: "0 12px 28px rgba(2, 6, 23, 0.35)",
+      }}
+    >
+      <div
+        style={{
+          color: "#cbd5e1",
+          fontSize: "0.82rem",
+          fontWeight: 700,
+          marginBottom: "0.45rem",
+        }}
+      >
+        {formatTooltipTimestamp(label ?? "")}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gap: "0.28rem",
+        }}
+      >
+        {payload.map((entry) => (
+          <div
+            key={String(entry.name)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.55rem",
+              fontSize: "0.82rem",
+            }}
+          >
+            <span
+              style={{
+                width: "0.7rem",
+                height: "0.7rem",
+                borderRadius: "999px",
+                backgroundColor: entry.color ?? "#38bdf8",
+                display: "inline-block",
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ color: "#cbd5e1", flex: 1 }}>{entry.name}</span>
+            <strong style={{ color: "#f8fafc" }}>
+              {typeof entry.value === "number" ? formatValue(entry.value) : entry.value}
+            </strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const inputStyle: CSSProperties = {
   borderRadius: "0.75rem",
   border: "1px solid #334155",
@@ -793,231 +847,47 @@ function buttonStyle(disabled: boolean): CSSProperties {
   };
 }
 
-type PlottedPoint = {
-  x: number;
-  y: number;
-  timestamp: string;
-  value: number;
-};
+function buildChartRows(timestamps: string[], series: ChartSeries[]): ChartRow[] {
+  return timestamps.map((timestamp) => {
+    const row: ChartRow = { timestamp };
 
-type GeometrySeries = {
-  series_key: string;
-  station_name: string;
-  sensor_name: string;
-  colorIndex: number;
-  path: string;
-  points: PlottedPoint[];
-  pointByTimestamp: Record<string, PlottedPoint>;
-};
-
-type ChartGeometry = {
-  width: number;
-  height: number;
-  plotLeft: number;
-  plotRight: number;
-  plotTop: number;
-  plotBottom: number;
-  gridLines: Array<{ key: string; x1: number; y1: number; x2: number; y2: number }>;
-  xTicks: Array<{ key: string; x: number; dateLabel: string; timeLabel: string }>;
-  timestampX: Array<{ timestamp: string; x: number }>;
-  series: GeometrySeries[];
-};
-
-const CHART_WIDTH = 960;
-const CHART_HEIGHT = 380;
-const PLOT_LEFT = 48;
-const PLOT_RIGHT = CHART_WIDTH - 24;
-const PLOT_TOP = 20;
-const PLOT_BOTTOM = CHART_HEIGHT - 52;
-
-function buildChartGeometry(
-  series: ChartSeries[],
-  timestamps: string[]
-): ChartGeometry {
-  const base: ChartGeometry = {
-    width: CHART_WIDTH,
-    height: CHART_HEIGHT,
-    plotLeft: PLOT_LEFT,
-    plotRight: PLOT_RIGHT,
-    plotTop: PLOT_TOP,
-    plotBottom: PLOT_BOTTOM,
-    gridLines: Array.from({ length: 5 }, (_, index) => {
-      const ratio = index / 4;
-      const y = PLOT_TOP + ratio * (PLOT_BOTTOM - PLOT_TOP);
-      return { key: `grid-${index}`, x1: PLOT_LEFT, y1: y, x2: PLOT_RIGHT, y2: y };
-    }),
-    xTicks: [],
-    timestampX: [],
-    series: [],
-  };
-
-  if (series.length === 0 || timestamps.length === 0) {
-    return base;
-  }
-
-  const times = timestamps.map((value) => new Date(value).getTime());
-  const minTime = Math.min(...times);
-  const maxTime = Math.max(...times);
-  const safeTimeRange = Math.max(maxTime - minTime, 1);
-  const plotWidth = PLOT_RIGHT - PLOT_LEFT;
-  const plotHeight = PLOT_BOTTOM - PLOT_TOP;
-
-  const xScale = (value: string) => {
-    if (timestamps.length === 1) {
-      return PLOT_LEFT + plotWidth / 2;
-    }
-    const time = new Date(value).getTime();
-    return PLOT_LEFT + ((time - minTime) / safeTimeRange) * plotWidth;
-  };
-
-  const timestampX = timestamps.map((timestamp) => ({
-    timestamp,
-    x: xScale(timestamp),
-  }));
-
-  const tickCount = Math.min(6, timestamps.length);
-  const xTicks = Array.from({ length: tickCount }, (_, index) => {
-    const ratio = tickCount === 1 ? 0 : index / (tickCount - 1);
-    const tsIndex = Math.round(ratio * (timestamps.length - 1));
-    const timestamp = timestamps[tsIndex];
-    const labels = formatAxisTimestamp(timestamp);
-    return {
-      key: `tick-${index}`,
-      x: xScale(timestamp),
-      dateLabel: labels.dateLabel,
-      timeLabel: labels.timeLabel,
-    };
-  });
-
-  const geometrySeries: GeometrySeries[] = series.map((entry, colorIndex) => {
-    const values = entry.points.map((point) => point.value);
-    const minValue = values.length > 0 ? Math.min(...values) : 0;
-    const maxValue = values.length > 0 ? Math.max(...values) : 0;
-    const valueRange = maxValue - minValue;
-
-    const yScale = (value: number) => {
-      if (valueRange === 0) {
-        return PLOT_TOP + plotHeight / 2;
-      }
-      return PLOT_BOTTOM - ((value - minValue) / valueRange) * plotHeight;
-    };
-
-    const plottedPoints: PlottedPoint[] = entry.points.map((point) => ({
-      x: xScale(point.timestamp),
-      y: yScale(point.value),
-      timestamp: point.timestamp,
-      value: point.value,
-    }));
-
-    const pointByTimestamp: Record<string, PlottedPoint> = {};
-    for (const point of plottedPoints) {
-      pointByTimestamp[point.timestamp] = point;
+    for (const entry of series) {
+      const point = entry.points.find((candidate) => candidate.timestamp === timestamp);
+      row[entry.series_key] = point ? point.value : null;
     }
 
-    const path = plottedPoints
-      .map(
-        (point, index) =>
-          `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
-      )
-      .join(" ");
-
-    return {
-      series_key: entry.series_key,
-      station_name: entry.station_name,
-      sensor_name: entry.sensor_name,
-      colorIndex,
-      path,
-      points: plottedPoints,
-      pointByTimestamp,
-    };
+    return row;
   });
-
-  return {
-    ...base,
-    xTicks,
-    timestampX,
-    series: geometrySeries,
-  };
 }
 
-type CrosshairTooltipProps = {
-  crosshair: CrosshairState;
-  geometry: ChartGeometry;
-};
-
-function CrosshairTooltip({ crosshair, geometry }: CrosshairTooltipProps) {
-  const rows = geometry.series
-    .map((series) => {
-      const point = series.pointByTimestamp[crosshair.timestamp];
-      if (!point) {
-        return null;
-      }
-      return {
-        key: series.series_key,
-        label: `${series.station_name} - ${series.sensor_name}`,
-        value: point.value,
-        color: seriesColors[series.colorIndex % seriesColors.length],
-      };
-    })
-    .filter((row): row is NonNullable<typeof row> => row !== null);
-
-  if (rows.length === 0) {
-    return null;
+function buildSeriesDomain(points: ChartPoint[]): [number, number] {
+  if (points.length === 0) {
+    return [0, 1];
   }
 
-  const boxWidth = 232;
-  const boxHeight = 30 + rows.length * 16;
-  const boxX =
-    crosshair.x + boxWidth + 16 > geometry.plotRight
-      ? crosshair.x - boxWidth - 12
-      : crosshair.x + 12;
-  const boxY = geometry.plotTop + 6;
-  const textX = boxX + 12;
+  const values = points.map((point) => point.value);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
 
-  return (
-    <g pointerEvents="none">
-      <rect
-        x={boxX}
-        y={boxY}
-        rx="10"
-        ry="10"
-        width={boxWidth}
-        height={boxHeight}
-        fill="#08111d"
-        stroke="#334155"
-      />
-      <text x={textX} y={boxY + 18} fill="#cbd5e1" fontSize="11" fontWeight="700">
-        {formatTooltipTimestamp(crosshair.timestamp)}
-      </text>
-      {rows.map((row, index) => (
-        <text
-          key={row.key}
-          x={textX}
-          y={boxY + 36 + index * 16}
-          fontSize="11"
-        >
-          <tspan fill={row.color}>{"\u25CF "}</tspan>
-          <tspan fill="#e2e8f0">{row.label}: </tspan>
-          <tspan fill="#f8fafc" fontWeight="700">
-            {formatValue(row.value)}
-          </tspan>
-        </text>
-      ))}
-    </g>
-  );
+  if (minValue === maxValue) {
+    const padding = Math.abs(minValue) * 0.05 || 1;
+    return [minValue - padding, maxValue + padding];
+  }
+
+  const padding = (maxValue - minValue) * 0.08;
+  return [minValue - padding, maxValue + padding];
 }
 
-function formatAxisTimestamp(value: string) {
+function formatAxisTick(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return { dateLabel: value, timeLabel: "" };
+    return value;
   }
 
   const pad = (input: number) => String(input).padStart(2, "0");
-  return {
-    dateLabel: `${pad(date.getDate())}/${pad(date.getMonth() + 1)}`,
-    timeLabel: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
-  };
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} ${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
 }
 
 function formatSeriesRange(points: ChartPoint[]) {
@@ -1053,6 +923,10 @@ function getDefaultDateTo() {
 }
 
 function buildPageSummary(totalTimestamps: number, currentPage: number, pageSize: number) {
+  if (totalTimestamps === 0) {
+    return "No timestamps";
+  }
+
   const startIndex = (currentPage - 1) * pageSize + 1;
   const endIndex = Math.min(totalTimestamps, currentPage * pageSize);
 
