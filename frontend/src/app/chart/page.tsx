@@ -161,6 +161,14 @@ export default function ChartPage() {
   }, []);
 
   const allSeries = useMemo(() => results?.series ?? [], [results]);
+  const seriesColorMap = useMemo(() => {
+    return Object.fromEntries(
+      allSeries.map((series, index) => [
+        series.series_key,
+        seriesColors[index % seriesColors.length],
+      ])
+    ) as Record<string, string>;
+  }, [allSeries]);
   const activeSeries = useMemo(
     () => allSeries.filter((series) => !hiddenSeriesKeys.includes(series.series_key)),
     [allSeries, hiddenSeriesKeys]
@@ -537,14 +545,14 @@ export default function ChartPage() {
                       content={<ChartTooltip />}
                       cursor={{ stroke: "#64748b", strokeDasharray: "4 4" }}
                     />
-                    {pagedSeries.map((series, index) => (
+                    {pagedSeries.map((series) => (
                       <Line
                         key={series.series_key}
                         yAxisId={series.series_key}
                         dataKey={series.series_key}
                         name={`${series.station_name} - ${series.sensor_name}`}
                         type="monotone"
-                        stroke={seriesColors[index % seriesColors.length]}
+                        stroke={seriesColorMap[series.series_key] ?? seriesColors[0]}
                         strokeWidth={2.5}
                         dot={false}
                         activeDot={{ r: 4 }}
@@ -569,9 +577,7 @@ export default function ChartPage() {
                 const visibleSeriesEntry = pagedSeries.find(
                   (entry) => entry.series_key === series.series_key
                 );
-                const colorIndex = allSeries.findIndex(
-                  (entry) => entry.series_key === series.series_key
-                );
+                const seriesColor = seriesColorMap[series.series_key] ?? seriesColors[0];
 
                 return (
                   <label
@@ -608,7 +614,7 @@ export default function ChartPage() {
                             width: "0.9rem",
                             height: "0.9rem",
                             borderRadius: "999px",
-                            backgroundColor: seriesColors[colorIndex % seriesColors.length],
+                            backgroundColor: seriesColor,
                             display: "inline-block",
                             flexShrink: 0,
                           }}
