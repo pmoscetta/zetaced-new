@@ -12,14 +12,17 @@ class DataQueryParams(BaseModel):
 
 
 class DataColumnResponse(BaseModel):
+    column_key: str
+    station_id: int
+    station_name: str
     sensor_type_id: int
     sensor_name: str
 
 
 class DataRowResponse(BaseModel):
     timestamp: datetime
-    station_id: int
-    station_name: str
+    date_label: str
+    time_labels: list[str]
     values: dict[str, float | None]
 
 

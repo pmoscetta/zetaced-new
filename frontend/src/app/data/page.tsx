@@ -18,14 +18,17 @@ type SensorOption = {
 };
 
 type DataColumn = {
+  column_key: string;
+  station_id: number;
+  station_name: string;
   sensor_type_id: number;
   sensor_name: string;
 };
 
 type DataRow = {
   timestamp: string;
-  station_id: number;
-  station_name: string;
+  date_label: string;
+  time_labels: string[];
   values: Record<string, number | null>;
 };
 
@@ -253,7 +256,7 @@ export default function DataPage() {
 
       <PageSection
         title="Aligned Results"
-        description="The table below is built directly from the API response structure: one timestamp row plus one dynamic column per selected sensor type."
+        description="The table below groups readings by the selected alignment window and renders one column for each requested station and sensor combination."
       >
         {isBootstrapping ? (
           <StateBox text="Loading filter metadata..." />
@@ -286,11 +289,22 @@ export default function DataPage() {
                 }}
               >
                 <tr>
-                  <HeaderCell>Timestamp</HeaderCell>
-                  <HeaderCell>Station</HeaderCell>
+                  <HeaderCell>Date</HeaderCell>
+                  <HeaderCell>Time</HeaderCell>
                   {visibleColumns.map((column) => (
-                    <HeaderCell key={column.sensor_type_id}>
-                      {column.sensor_name}
+                    <HeaderCell key={column.column_key}>
+                      <div>{column.station_name}</div>
+                      <div
+                        style={{
+                          marginTop: "0.25rem",
+                          color: "#cbd5e1",
+                          fontWeight: 500,
+                          fontSize: "0.85rem",
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {column.sensor_name}
+                      </div>
                     </HeaderCell>
                   ))}
                 </tr>
@@ -298,16 +312,28 @@ export default function DataPage() {
               <tbody>
                 {visibleRows.slice(0, 250).map((row, index) => (
                   <tr
-                    key={`${row.station_id}-${row.timestamp}-${index}`}
+                    key={`${row.timestamp}-${index}`}
                     style={{
                       backgroundColor: index % 2 === 0 ? "#111c30" : "#0d1728",
                     }}
                   >
-                    <BodyCell>{formatDateTime(row.timestamp)}</BodyCell>
-                    <BodyCell>{row.station_name}</BodyCell>
+                    <BodyCell>{row.date_label}</BodyCell>
+                    <BodyCell>
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: "0.15rem",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {row.time_labels.map((timeLabel) => (
+                          <span key={timeLabel}>{timeLabel}</span>
+                        ))}
+                      </div>
+                    </BodyCell>
                     {visibleColumns.map((column) => (
-                      <BodyCell key={column.sensor_type_id}>
-                        {formatValue(row.values[String(column.sensor_type_id)] ?? null)}
+                      <BodyCell key={column.column_key}>
+                        {formatTableValue(row.values[column.column_key] ?? null)}
                       </BodyCell>
                     ))}
                   </tr>
@@ -501,21 +527,12 @@ function buttonStyle(disabled: boolean): CSSProperties {
   };
 }
 
-function formatValue(value: number | null) {
+function formatTableValue(value: number | null) {
   if (value === null) {
-    return "n/a";
+    return "";
   }
 
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
 }
 
 function getDefaultDateFrom() {

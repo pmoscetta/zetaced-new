@@ -1,4 +1,3 @@
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -204,15 +203,22 @@ def _fetch_sensor_instances(
 
 
 def _extract_columns(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    column_map: dict[int, dict[str, Any]] = {}
+    column_map: dict[str, dict[str, Any]] = {}
 
     for row in raw_rows:
+        station_id = row.get("station_id")
+        station_name = row.get("station_name")
         sensor_type_id = row.get("sensor_type_id")
-        if sensor_type_id is None:
+        if station_id is None or sensor_type_id is None:
             continue
 
+        station_id_int = int(station_id)
         sensor_type_id_int = int(sensor_type_id)
-        if sensor_type_id_int in column_map:
+        column_key = _build_column_key(
+            station_id=station_id_int,
+            sensor_type_id=sensor_type_id_int,
+        )
+        if column_key in column_map:
             continue
 
         sensor_name = (
@@ -220,19 +226,29 @@ def _extract_columns(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             or row.get("sensor_type_name")
             or f"Sensor {sensor_type_id_int}"
         )
-        column_map[sensor_type_id_int] = {
+        column_map[column_key] = {
+            "column_key": column_key,
+            "station_id": station_id_int,
+            "station_name": station_name or f"Station {station_id_int}",
             "sensor_type_id": sensor_type_id_int,
             "sensor_name": sensor_name,
         }
 
-    return [column_map[key] for key in sorted(column_map)]
+    return sorted(
+        column_map.values(),
+        key=lambda column: (
+            str(column["station_name"]).lower(),
+            int(column["station_id"]),
+            str(column["sensor_name"]).lower(),
+            int(column["sensor_type_id"]),
+        ),
+    )
 
 
 @dataclass
 class _AlignedRow:
     timestamp: datetime
-    station_id: int
-    station_name: str
+    time_labels: set[str] = field(default_factory=set)
     values: dict[str, float | None] = field(default_factory=dict)
 
 
@@ -240,7 +256,7 @@ def _align_rows(
     raw_rows: list[dict[str, Any]],
     alignment_seconds: int,
 ) -> list[dict[str, Any]]:
-    grouped_rows: dict[int, list[_AlignedRow]] = defaultdict(list)
+    aligned_rows: list[_AlignedRow] = []
 
     for raw_row in raw_rows:
         recorded_at = raw_row.get("recorded_at")
@@ -249,12 +265,13 @@ def _align_rows(
         if recorded_at is None or station_id is None or sensor_type_id is None:
             continue
 
-        station_id_int = int(station_id)
-        sensor_key = str(int(sensor_type_id))
-        station_rows = grouped_rows[station_id_int]
+        sensor_key = _build_column_key(
+            station_id=int(station_id),
+            sensor_type_id=int(sensor_type_id),
+        )
         target_row = None
 
-        for candidate in reversed(station_rows):
+        for candidate in reversed(aligned_rows):
             delta_seconds = abs((recorded_at - candidate.timestamp).total_seconds())
             if delta_seconds > alignment_seconds:
                 break
@@ -265,26 +282,23 @@ def _align_rows(
         if target_row is None:
             target_row = _AlignedRow(
                 timestamp=recorded_at,
-                station_id=station_id_int,
-                station_name=raw_row.get("station_name")
-                or f"Station {station_id_int}",
             )
-            station_rows.append(target_row)
+            aligned_rows.append(target_row)
 
         target_row.values[sensor_key] = _to_float(raw_row.get("value"))
+        target_row.time_labels.add(recorded_at.strftime("%H:%M:%S"))
 
     flattened_rows = [
         {
             "timestamp": aligned_row.timestamp,
-            "station_id": aligned_row.station_id,
-            "station_name": aligned_row.station_name,
+            "date_label": aligned_row.timestamp.strftime("%d/%m/%Y"),
+            "time_labels": sorted(aligned_row.time_labels),
             "values": aligned_row.values,
         }
-        for station_rows in grouped_rows.values()
-        for aligned_row in station_rows
+        for aligned_row in aligned_rows
     ]
 
-    flattened_rows.sort(key=lambda row: (row["station_id"], row["timestamp"]))
+    flattened_rows.sort(key=lambda row: row["timestamp"])
     return flattened_rows
 
 
@@ -302,6 +316,10 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _build_column_key(station_id: int, sensor_type_id: int) -> str:
+    return f"{station_id}:{sensor_type_id}"
 
 
 def _is_visible_for_level(raw_threshold: Any, user_level: int) -> bool:
