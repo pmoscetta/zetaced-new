@@ -38,14 +38,9 @@ type ChartResponse = {
   series: ChartSeries[];
 };
 
-type HoveredPoint = {
-  stationName: string;
-  sensorName: string;
+type CrosshairState = {
   timestamp: string;
-  value: number;
   x: number;
-  y: number;
-  color: string;
 };
 
 const CHART_PAGE_SIZE = 100;
@@ -70,7 +65,7 @@ export default function ChartPage() {
   const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [results, setResults] = useState<ChartResponse | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [hoveredPoint, setHoveredPoint] = useState<HoveredPoint | null>(null);
+  const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
@@ -183,7 +178,10 @@ export default function ChartPage() {
       }))
       .filter((series) => series.points.length > 0);
   }, [allSeries, visibleTimestampSet]);
-  const chartGeometry = useMemo(() => buildChartGeometry(visibleSeries), [visibleSeries]);
+  const chartGeometry = useMemo(
+    () => buildChartGeometry(visibleSeries, visibleTimestampKeys),
+    [visibleSeries, visibleTimestampKeys]
+  );
 
   async function loadChart(
     stationIds: number[],
@@ -255,7 +253,7 @@ export default function ChartPage() {
     setSelectedSensorIds(nextSensorIds);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
-    setHoveredPoint(null);
+    setCrosshair(null);
 
     void loadChart(nextStationIds, nextSensorIds, nextDateFrom, nextDateTo);
   };
@@ -275,46 +273,31 @@ export default function ChartPage() {
   }, []);
 
   function goToPreviousPage() {
-    setHoveredPoint(null);
+    setCrosshair(null);
     setCurrentPage((page) => Math.max(1, page - 1));
   }
 
   function goToNextPage() {
-    setHoveredPoint(null);
+    setCrosshair(null);
     setCurrentPage((page) => Math.min(totalPages, page + 1));
   }
 
-  function handleSeriesHover(
-    event: React.MouseEvent<SVGPathElement>,
-    series: (typeof chartGeometry.series)[number],
-    color: string
-  ) {
+  function handlePlotMouseMove(event: React.MouseEvent<SVGRectElement>) {
     const svgElement = event.currentTarget.ownerSVGElement;
-    if (!svgElement || series.points.length === 0) {
+    if (!svgElement || chartGeometry.timestampX.length === 0) {
       return;
     }
 
     const rect = svgElement.getBoundingClientRect();
-    const pointerX = ((event.clientX - rect.left) / rect.width) * 960;
-    const closestPoint = series.points.reduce((closest, candidate) => {
-      if (!closest) {
-        return candidate;
-      }
-
-      return Math.abs(candidate.x - pointerX) < Math.abs(closest.x - pointerX)
+    const pointerX =
+      ((event.clientX - rect.left) / rect.width) * chartGeometry.width;
+    const nearest = chartGeometry.timestampX.reduce((closest, candidate) =>
+      Math.abs(candidate.x - pointerX) < Math.abs(closest.x - pointerX)
         ? candidate
-        : closest;
-    }, series.points[0]);
+        : closest
+    );
 
-    setHoveredPoint({
-      stationName: series.station_name,
-      sensorName: series.sensor_name,
-      timestamp: closestPoint.timestamp,
-      value: closestPoint.value,
-      x: closestPoint.x,
-      y: closestPoint.y,
-      color,
-    });
+    setCrosshair({ timestamp: nearest.timestamp, x: nearest.x });
   }
 
   return (
@@ -459,15 +442,21 @@ export default function ChartPage() {
               }}
             >
               <svg
-                viewBox="0 0 960 360"
+                viewBox={`0 0 ${chartGeometry.width} ${chartGeometry.height}`}
                 style={{
                   width: "100%",
                   minWidth: "42rem",
-                  height: "22rem",
+                  height: "24rem",
                   display: "block",
                 }}
               >
-                <rect x="0" y="0" width="960" height="360" fill="#0b1220" />
+                <rect
+                  x="0"
+                  y="0"
+                  width={chartGeometry.width}
+                  height={chartGeometry.height}
+                  fill="#0b1220"
+                />
                 {chartGeometry.gridLines.map((line) => (
                   <line
                     key={line.key}
@@ -479,82 +468,94 @@ export default function ChartPage() {
                     strokeWidth="1"
                   />
                 ))}
-                {chartGeometry.series.map((series, index) => (
-                  <g key={series.series_key}>
-                    <path
-                      d={series.path}
-                      fill="none"
-                      stroke={seriesColors[index % seriesColors.length]}
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+
+                {chartGeometry.xTicks.map((tick) => (
+                  <g key={tick.key} pointerEvents="none">
+                    <line
+                      x1={tick.x}
+                      y1={chartGeometry.plotTop}
+                      x2={tick.x}
+                      y2={chartGeometry.plotBottom}
+                      stroke="#16202f"
+                      strokeWidth="1"
                     />
-                    <path
-                      d={series.path}
-                      fill="none"
-                      stroke="transparent"
-                      strokeWidth="16"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      onMouseMove={(event) =>
-                        handleSeriesHover(
-                          event,
-                          series,
-                          seriesColors[index % seriesColors.length]
-                        )
-                      }
-                      onMouseLeave={() => setHoveredPoint(null)}
-                    />
+                    <text
+                      x={tick.x}
+                      y={chartGeometry.plotBottom + 16}
+                      fill="#94a3b8"
+                      fontSize="10"
+                      textAnchor="middle"
+                    >
+                      {tick.dateLabel}
+                    </text>
+                    <text
+                      x={tick.x}
+                      y={chartGeometry.plotBottom + 30}
+                      fill="#94a3b8"
+                      fontSize="10"
+                      textAnchor="middle"
+                    >
+                      {tick.timeLabel}
+                    </text>
                   </g>
                 ))}
-                {hoveredPoint ? (
+
+                {chartGeometry.series.map((series) => (
+                  <path
+                    key={series.series_key}
+                    d={series.path}
+                    fill="none"
+                    stroke={seriesColors[series.colorIndex % seriesColors.length]}
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
+
+                {crosshair ? (
                   <g pointerEvents="none">
-                    <circle
-                      cx={hoveredPoint.x}
-                      cy={hoveredPoint.y}
-                      r="5"
-                      fill={hoveredPoint.color}
-                      stroke="#f8fafc"
-                      strokeWidth="2"
+                    <line
+                      x1={crosshair.x}
+                      y1={chartGeometry.plotTop}
+                      x2={crosshair.x}
+                      y2={chartGeometry.plotBottom}
+                      stroke="#64748b"
+                      strokeWidth="1"
+                      strokeDasharray="4 4"
                     />
-                    <rect
-                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 190 : hoveredPoint.x + 12}
-                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 12 : hoveredPoint.y - 70}
-                      rx="10"
-                      ry="10"
-                      width="178"
-                      height="58"
-                      fill="#08111d"
-                      stroke="#334155"
+                    {chartGeometry.series.map((series) => {
+                      const point = series.pointByTimestamp[crosshair.timestamp];
+                      if (!point) {
+                        return null;
+                      }
+                      return (
+                        <circle
+                          key={series.series_key}
+                          cx={point.x}
+                          cy={point.y}
+                          r="4.5"
+                          fill={seriesColors[series.colorIndex % seriesColors.length]}
+                          stroke="#f8fafc"
+                          strokeWidth="1.5"
+                        />
+                      );
+                    })}
+                    <CrosshairTooltip
+                      crosshair={crosshair}
+                      geometry={chartGeometry}
                     />
-                    <text
-                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 178 : hoveredPoint.x + 24}
-                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 32 : hoveredPoint.y - 50}
-                      fill="#f8fafc"
-                      fontSize="12"
-                      fontWeight="700"
-                    >
-                      {hoveredPoint.stationName} - {hoveredPoint.sensorName}
-                    </text>
-                    <text
-                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 178 : hoveredPoint.x + 24}
-                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 48 : hoveredPoint.y - 34}
-                      fill="#cbd5e1"
-                      fontSize="11"
-                    >
-                      {formatTooltipTimestamp(hoveredPoint.timestamp)}
-                    </text>
-                    <text
-                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 178 : hoveredPoint.x + 24}
-                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 64 : hoveredPoint.y - 18}
-                      fill="#38bdf8"
-                      fontSize="12"
-                      fontWeight="700"
-                    >
-                      Value: {formatValue(hoveredPoint.value)}
-                    </text>
                   </g>
                 ) : null}
+
+                <rect
+                  x={chartGeometry.plotLeft}
+                  y={chartGeometry.plotTop}
+                  width={chartGeometry.plotRight - chartGeometry.plotLeft}
+                  height={chartGeometry.plotBottom - chartGeometry.plotTop}
+                  fill="transparent"
+                  onMouseMove={handlePlotMouseMove}
+                  onMouseLeave={() => setCrosshair(null)}
+                />
               </svg>
             </div>
 
@@ -743,95 +744,230 @@ function buttonStyle(disabled: boolean): CSSProperties {
   };
 }
 
-function buildChartGeometry(series: ChartSeries[]) {
-  const allPoints = series.flatMap((entry) => entry.points);
-  if (allPoints.length === 0) {
-    return {
-      gridLines: [] as Array<{
-        key: string;
-        x1: number;
-        y1: number;
-        x2: number;
-        y2: number;
-      }>,
-      series: [] as Array<{
-        series_key: string;
-        station_name: string;
-        sensor_name: string;
-        path: string;
-        points: Array<{
-          x: number;
-          y: number;
-          timestamp: string;
-          value: number;
-        }>;
-      }>,
-    };
+type PlottedPoint = {
+  x: number;
+  y: number;
+  timestamp: string;
+  value: number;
+};
+
+type GeometrySeries = {
+  series_key: string;
+  station_name: string;
+  sensor_name: string;
+  colorIndex: number;
+  path: string;
+  points: PlottedPoint[];
+  pointByTimestamp: Record<string, PlottedPoint>;
+};
+
+type ChartGeometry = {
+  width: number;
+  height: number;
+  plotLeft: number;
+  plotRight: number;
+  plotTop: number;
+  plotBottom: number;
+  gridLines: Array<{ key: string; x1: number; y1: number; x2: number; y2: number }>;
+  xTicks: Array<{ key: string; x: number; dateLabel: string; timeLabel: string }>;
+  timestampX: Array<{ timestamp: string; x: number }>;
+  series: GeometrySeries[];
+};
+
+const CHART_WIDTH = 960;
+const CHART_HEIGHT = 380;
+const PLOT_LEFT = 48;
+const PLOT_RIGHT = CHART_WIDTH - 24;
+const PLOT_TOP = 20;
+const PLOT_BOTTOM = CHART_HEIGHT - 52;
+
+function buildChartGeometry(
+  series: ChartSeries[],
+  timestamps: string[]
+): ChartGeometry {
+  const base: ChartGeometry = {
+    width: CHART_WIDTH,
+    height: CHART_HEIGHT,
+    plotLeft: PLOT_LEFT,
+    plotRight: PLOT_RIGHT,
+    plotTop: PLOT_TOP,
+    plotBottom: PLOT_BOTTOM,
+    gridLines: Array.from({ length: 5 }, (_, index) => {
+      const ratio = index / 4;
+      const y = PLOT_TOP + ratio * (PLOT_BOTTOM - PLOT_TOP);
+      return { key: `grid-${index}`, x1: PLOT_LEFT, y1: y, x2: PLOT_RIGHT, y2: y };
+    }),
+    xTicks: [],
+    timestampX: [],
+    series: [],
+  };
+
+  if (series.length === 0 || timestamps.length === 0) {
+    return base;
   }
 
-  const chartWidth = 960;
-  const chartHeight = 360;
-  const left = 40;
-  const right = 24;
-  const top = 24;
-  const bottom = 32;
-
-  const timestamps = allPoints.map((point) => new Date(point.timestamp).getTime());
-  const values = allPoints.map((point) => point.value);
-  const minTime = Math.min(...timestamps);
-  const maxTime = Math.max(...timestamps);
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
+  const times = timestamps.map((value) => new Date(value).getTime());
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
   const safeTimeRange = Math.max(maxTime - minTime, 1);
-  const safeValueRange = Math.max(maxValue - minValue, 1);
+  const plotWidth = PLOT_RIGHT - PLOT_LEFT;
+  const plotHeight = PLOT_BOTTOM - PLOT_TOP;
 
-  const gridLines = Array.from({ length: 5 }, (_, index) => {
-    const ratio = index / 4;
-    const y = top + ratio * (chartHeight - top - bottom);
+  const xScale = (value: string) => {
+    if (timestamps.length === 1) {
+      return PLOT_LEFT + plotWidth / 2;
+    }
+    const time = new Date(value).getTime();
+    return PLOT_LEFT + ((time - minTime) / safeTimeRange) * plotWidth;
+  };
+
+  const timestampX = timestamps.map((timestamp) => ({
+    timestamp,
+    x: xScale(timestamp),
+  }));
+
+  const tickCount = Math.min(6, timestamps.length);
+  const xTicks = Array.from({ length: tickCount }, (_, index) => {
+    const ratio = tickCount === 1 ? 0 : index / (tickCount - 1);
+    const tsIndex = Math.round(ratio * (timestamps.length - 1));
+    const timestamp = timestamps[tsIndex];
+    const labels = formatAxisTimestamp(timestamp);
     return {
-      key: `grid-${index}`,
-      x1: left,
-      y1: y,
-      x2: chartWidth - right,
-      y2: y,
+      key: `tick-${index}`,
+      x: xScale(timestamp),
+      dateLabel: labels.dateLabel,
+      timeLabel: labels.timeLabel,
+    };
+  });
+
+  const geometrySeries: GeometrySeries[] = series.map((entry, colorIndex) => {
+    const values = entry.points.map((point) => point.value);
+    const minValue = values.length > 0 ? Math.min(...values) : 0;
+    const maxValue = values.length > 0 ? Math.max(...values) : 0;
+    const valueRange = maxValue - minValue;
+
+    const yScale = (value: number) => {
+      if (valueRange === 0) {
+        return PLOT_TOP + plotHeight / 2;
+      }
+      return PLOT_BOTTOM - ((value - minValue) / valueRange) * plotHeight;
+    };
+
+    const plottedPoints: PlottedPoint[] = entry.points.map((point) => ({
+      x: xScale(point.timestamp),
+      y: yScale(point.value),
+      timestamp: point.timestamp,
+      value: point.value,
+    }));
+
+    const pointByTimestamp: Record<string, PlottedPoint> = {};
+    for (const point of plottedPoints) {
+      pointByTimestamp[point.timestamp] = point;
+    }
+
+    const path = plottedPoints
+      .map(
+        (point, index) =>
+          `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
+      )
+      .join(" ");
+
+    return {
+      series_key: entry.series_key,
+      station_name: entry.station_name,
+      sensor_name: entry.sensor_name,
+      colorIndex,
+      path,
+      points: plottedPoints,
+      pointByTimestamp,
     };
   });
 
   return {
-    gridLines,
-    series: series.map((entry) => {
-      const plottedPoints = entry.points.map((point) => {
-        const timeValue = new Date(point.timestamp).getTime();
-        const x =
-          left +
-          ((timeValue - minTime) / safeTimeRange) * (chartWidth - left - right);
-        const y =
-          chartHeight -
-          bottom -
-          ((point.value - minValue) / safeValueRange) * (chartHeight - top - bottom);
+    ...base,
+    xTicks,
+    timestampX,
+    series: geometrySeries,
+  };
+}
 
-        return {
-          x,
-          y,
-          timestamp: point.timestamp,
-          value: point.value,
-        };
-      });
+type CrosshairTooltipProps = {
+  crosshair: CrosshairState;
+  geometry: ChartGeometry;
+};
 
-      const path = plottedPoints
-        .map((point, index) => {
-          return `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
-        })
-        .join(" ");
-
+function CrosshairTooltip({ crosshair, geometry }: CrosshairTooltipProps) {
+  const rows = geometry.series
+    .map((series) => {
+      const point = series.pointByTimestamp[crosshair.timestamp];
+      if (!point) {
+        return null;
+      }
       return {
-        series_key: entry.series_key,
-        station_name: entry.station_name,
-        sensor_name: entry.sensor_name,
-        path,
-        points: plottedPoints,
+        key: series.series_key,
+        label: `${series.station_name} - ${series.sensor_name}`,
+        value: point.value,
+        color: seriesColors[series.colorIndex % seriesColors.length],
       };
-    }),
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const boxWidth = 232;
+  const boxHeight = 30 + rows.length * 16;
+  const boxX =
+    crosshair.x + boxWidth + 16 > geometry.plotRight
+      ? crosshair.x - boxWidth - 12
+      : crosshair.x + 12;
+  const boxY = geometry.plotTop + 6;
+  const textX = boxX + 12;
+
+  return (
+    <g pointerEvents="none">
+      <rect
+        x={boxX}
+        y={boxY}
+        rx="10"
+        ry="10"
+        width={boxWidth}
+        height={boxHeight}
+        fill="#08111d"
+        stroke="#334155"
+      />
+      <text x={textX} y={boxY + 18} fill="#cbd5e1" fontSize="11" fontWeight="700">
+        {formatTooltipTimestamp(crosshair.timestamp)}
+      </text>
+      {rows.map((row, index) => (
+        <text
+          key={row.key}
+          x={textX}
+          y={boxY + 36 + index * 16}
+          fontSize="11"
+        >
+          <tspan fill={row.color}>{"\u25CF "}</tspan>
+          <tspan fill="#e2e8f0">{row.label}: </tspan>
+          <tspan fill="#f8fafc" fontWeight="700">
+            {formatValue(row.value)}
+          </tspan>
+        </text>
+      ))}
+    </g>
+  );
+}
+
+function formatAxisTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return { dateLabel: value, timeLabel: "" };
+  }
+
+  const pad = (input: number) => String(input).padStart(2, "0");
+  return {
+    dateLabel: `${pad(date.getDate())}/${pad(date.getMonth() + 1)}`,
+    timeLabel: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
   };
 }
 

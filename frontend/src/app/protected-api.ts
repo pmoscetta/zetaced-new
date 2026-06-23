@@ -34,13 +34,26 @@ export async function fetchProtectedJson<T>(
     throw new Error("Session expired.");
   }
 
-  const payload = (await response.json()) as unknown;
+  const rawBody = await response.text();
+  let payload: unknown = null;
+  if (rawBody) {
+    try {
+      payload = JSON.parse(rawBody) as unknown;
+    } catch {
+      payload = null;
+    }
+  }
+
   if (!response.ok) {
-    const message = extractErrorMessage(payload as ErrorPayload);
+    const message = payload
+      ? extractErrorMessage(payload as ErrorPayload)
+      : null;
     if (message) {
       throw new Error(message);
     }
-    throw new Error("Request failed.");
+    throw new Error(
+      `Request failed (${response.status}). ${rawBody.slice(0, 200)}`.trim()
+    );
   }
 
   return payload as T;

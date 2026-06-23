@@ -3,16 +3,42 @@ from typing import Any
 
 from db.mysql import open_tenant_mysql_connection
 
-ALARM_TABLE = "dv_zetaced_message"
 DEFAULT_LIMIT = 50
 
-_MESSAGE_COLUMN_CANDIDATES = ("rtext", "message", "text", "msg", "description")
-_TIMESTAMP_COLUMN_CANDIDATES = ("timestamp", "rdatetime", "datetime", "created_at")
-_DATE_COLUMN_CANDIDATES = ("rdate", "date")
-_TIME_COLUMN_CANDIDATES = ("rtime", "time")
+_TABLE_NAME_CANDIDATES = (
+    "dv_zetaced_message",
+    "dv_zetaced_messages",
+    "dv_message",
+    "dv_messages",
+    "dv_zetaced_log",
+    "dv_zetaced_logs",
+    "dv_log",
+    "dv_logs",
+    "dv_zetaced_alarm",
+    "dv_zetaced_alarms",
+    "dv_alarm",
+    "dv_alarms",
+)
+_TABLE_NAME_KEYWORDS = ("message", "messaggi", "msg", "log", "alarm", "allarm", "diary")
+
+_MESSAGE_COLUMN_CANDIDATES = ("rtext", "message", "text", "msg", "description", "descrizione")
+_TIMESTAMP_COLUMN_CANDIDATES = ("timestamp", "rdatetime", "datetime", "created_at", "data_ora")
+_DATE_COLUMN_CANDIDATES = ("rdate", "date", "data")
+_TIME_COLUMN_CANDIDATES = ("rtime", "time", "ora")
 _ID_COLUMN_CANDIDATES = ("id", "message_id")
 
-_ALARM_KEYWORDS = ("alarm", "allarme", "alert", "critical", "critico", "fault", "guasto", "error", "errore")
+_ALARM_KEYWORDS = (
+    "alarm",
+    "allarme",
+    "allarm",
+    "alert",
+    "critical",
+    "critico",
+    "fault",
+    "guasto",
+    "error",
+    "errore",
+)
 _WARNING_KEYWORDS = ("warning", "warn", "attenzione", "avviso", "low", "high")
 
 
@@ -21,7 +47,11 @@ def list_alarms(
     limit: int = DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
     with open_tenant_mysql_connection(tenant) as connection:
-        columns = _get_table_columns(connection, ALARM_TABLE)
+        table = _find_alarm_table(connection)
+        if not table:
+            return []
+
+        columns = _get_table_columns(connection, table)
 
         id_column = _pick_column(columns, _ID_COLUMN_CANDIDATES)
         message_column = _pick_column(columns, _MESSAGE_COLUMN_CANDIDATES)
@@ -51,7 +81,7 @@ def list_alarms(
             id_column=id_column,
         )
 
-        sql = f"SELECT {', '.join(select_parts)} FROM `{ALARM_TABLE}`{order_clause} LIMIT %s"
+        sql = f"SELECT {', '.join(select_parts)} FROM `{table}`{order_clause} LIMIT %s"
 
         with connection.cursor() as cursor:
             cursor.execute(sql, (limit,))
@@ -80,6 +110,36 @@ def list_alarms(
     return alarms
 
 
+def _find_alarm_table(connection: Any) -> str | None:
+    with connection.cursor() as cursor:
+        cursor.execute("SHOW TABLES")
+        rows = cursor.fetchall()
+
+    table_names: list[str] = []
+    for row in rows:
+        for value in row.values():
+            if value:
+                table_names.append(str(value))
+
+    lookup = {name.lower(): name for name in table_names}
+
+    for candidate in _TABLE_NAME_CANDIDATES:
+        if candidate in lookup:
+            return lookup[candidate]
+
+    for keyword in _TABLE_NAME_KEYWORDS:
+        for lowered, original in lookup.items():
+            if keyword in lowered:
+                return original
+
+    for original in table_names:
+        columns = _get_table_columns(connection, original)
+        if _pick_column(columns, _MESSAGE_COLUMN_CANDIDATES):
+            return original
+
+    return None
+
+
 def _get_table_columns(connection: Any, table: str) -> dict[str, str]:
     with connection.cursor() as cursor:
         cursor.execute(f"SHOW COLUMNS FROM `{table}`")
@@ -104,6 +164,9 @@ def _build_order_clause(
     time_column: str | None,
     id_column: str | None,
 ) -> str:
+    if id_column:
+        return f" ORDER BY `{id_column}` DESC"
+
     if timestamp_column:
         return f" ORDER BY `{timestamp_column}` DESC"
 
@@ -112,9 +175,6 @@ def _build_order_clause(
 
     if date_column:
         return f" ORDER BY `{date_column}` DESC"
-
-    if id_column:
-        return f" ORDER BY `{id_column}` DESC"
 
     return ""
 
