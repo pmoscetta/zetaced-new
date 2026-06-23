@@ -8,7 +8,7 @@ import AppShell from "../AppShell";
 import DateTimePickerField from "../DateTimePickerField";
 import PaginationControls from "../PaginationControls";
 import PageSection from "../PageSection";
-import { fetchProtectedJson } from "../protected-api";
+import { fetchProtectedBlob, fetchProtectedJson, triggerBlobDownload } from "../protected-api";
 
 type StationOption = {
   station_id: number;
@@ -50,6 +50,10 @@ export default function DataPage() {
   const [dateFrom, setDateFrom] = useState<Date | null>(getDefaultDateFrom());
   const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [alignmentSeconds, setAlignmentSeconds] = useState("300");
+  const [csvSeparator, setCsvSeparator] = useState<"dot" | "comma">("dot");
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [results, setResults] = useState<DataResponse | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -258,6 +262,47 @@ export default function DataPage() {
     );
   }
 
+  function buildExportParams() {
+    const params = new URLSearchParams();
+    selectedStationIds.forEach((id) => params.append("station_ids", String(id)));
+    selectedSensorIds.forEach((id) => params.append("sensor_ids", String(id)));
+    if (dateFrom) params.set("date_from", dateFrom.toISOString());
+    if (dateTo) params.set("date_to", dateTo.toISOString());
+    params.set("alignment_seconds", alignmentSeconds || "300");
+    return params;
+  }
+
+  async function handleExportCsv() {
+    if (!hasFilters) return;
+    setIsExportingCsv(true);
+    setExportError("");
+    try {
+      const params = buildExportParams();
+      params.set("separator", csvSeparator);
+      const { blob, filename } = await fetchProtectedBlob(`/data/export/csv?${params.toString()}`);
+      triggerBlobDownload(blob, filename);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "CSV export failed.");
+    } finally {
+      setIsExportingCsv(false);
+    }
+  }
+
+  async function handleExportPdf() {
+    if (!hasFilters) return;
+    setIsExportingPdf(true);
+    setExportError("");
+    try {
+      const params = buildExportParams();
+      const { blob, filename } = await fetchProtectedBlob(`/data/export/pdf?${params.toString()}`);
+      triggerBlobDownload(blob, filename);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "PDF export failed.");
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }
+
   function goToPreviousPage() {
     setCurrentPage((page) => Math.max(1, page - 1));
   }
@@ -360,16 +405,58 @@ export default function DataPage() {
         title="Aligned Results"
         description="The table below groups readings by the selected alignment window and renders one column for each requested station and sensor combination."
         actions={
-          <button
-            type="button"
-            onClick={openChartPopup}
-            disabled={!hasFilters || isBootstrapping || isLoadingResults}
-            style={buttonStyle(!hasFilters || isBootstrapping || isLoadingResults)}
-          >
-            Open chart window
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem" }}>
+            <button
+              type="button"
+              onClick={openChartPopup}
+              disabled={!hasFilters || isBootstrapping || isLoadingResults}
+              style={buttonStyle(!hasFilters || isBootstrapping || isLoadingResults)}
+            >
+              Open chart window
+            </button>
+
+            <div style={{ width: "1px", height: "1.75rem", backgroundColor: "#24324a" }} />
+
+            <select
+              value={csvSeparator}
+              onChange={(e) => setCsvSeparator(e.target.value as "dot" | "comma")}
+              style={{
+                borderRadius: "0.75rem",
+                border: "1px solid #334155",
+                backgroundColor: "#0b1220",
+                color: "#cbd5e1",
+                padding: "0.75rem 0.9rem",
+                fontSize: "0.9rem",
+                cursor: "pointer",
+              }}
+            >
+              <option value="dot">Decimal: dot (1.23)</option>
+              <option value="comma">Decimal: comma (1,23)</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => void handleExportCsv()}
+              disabled={!hasFilters || isBootstrapping || isLoadingResults || isExportingCsv || isExportingPdf}
+              style={buttonStyle(!hasFilters || isBootstrapping || isLoadingResults || isExportingCsv || isExportingPdf)}
+            >
+              {isExportingCsv ? "Exporting..." : "Export CSV"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleExportPdf()}
+              disabled={!hasFilters || isBootstrapping || isLoadingResults || isExportingCsv || isExportingPdf}
+              style={buttonStyle(!hasFilters || isBootstrapping || isLoadingResults || isExportingCsv || isExportingPdf)}
+            >
+              {isExportingPdf ? "Generating PDF..." : "Export PDF"}
+            </button>
+          </div>
         }
       >
+        {exportError ? (
+          <StateBox text={exportError} tone="error" />
+        ) : null}
         {isBootstrapping ? (
           <StateBox text="Loading filter metadata..." />
         ) : error ? (

@@ -59,6 +59,47 @@ export async function fetchProtectedJson<T>(
   return payload as T;
 }
 
+export async function fetchProtectedBlob(path: string): Promise<{ blob: Blob; filename: string }> {
+  const session = getStoredSession();
+  if (!session) {
+    throw new Error("Missing local session.");
+  }
+
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    headers: { Authorization: `Bearer ${session.accessToken}` },
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    clearStoredSession();
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+    throw new Error("Session expired.");
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Export failed (${response.status}). ${text.slice(0, 200)}`.trim());
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = /filename="?([^";\n]+)"?/.exec(disposition);
+  const filename = match?.[1] ?? "export";
+  return { blob, filename };
+}
+
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
 function extractErrorMessage(payload: ErrorPayload): string | null {
   if (!payload || typeof payload !== "object") {
     return null;
