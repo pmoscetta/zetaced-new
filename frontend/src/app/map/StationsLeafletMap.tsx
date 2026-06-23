@@ -78,12 +78,12 @@ export default function StationsLeafletMap({ stations }: StationsLeafletMapProps
         style={{
           height: "32rem",
           width: "100%",
-          backgroundColor: "#09111f",
+          backgroundColor: "#dbeafe",
         }}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <FitBounds stations={mappedStations} />
         {mappedStations.map((station) => (
@@ -103,100 +103,55 @@ export default function StationsLeafletMap({ stations }: StationsLeafletMapProps
             <Tooltip direction="top" offset={[0, -16]}>
               {station.station_name}
             </Tooltip>
-            <Popup minWidth={280}>
-              <div style={{ display: "grid", gap: "0.8rem" }}>
-                <div>
+            <Popup minWidth={240} maxWidth={420} className="zetaced-station-popup">
+              <div
+                style={{
+                  display: "grid",
+                  gap: "0.7rem",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "0.98rem",
+                    fontWeight: 700,
+                    color: "#111827",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {station.station_name} ({String(station.station_id).padStart(2, "0")})
+                </div>
+
+                {station.sensors.length === 0 ? (
                   <div
                     style={{
-                      fontSize: "1rem",
-                      fontWeight: 700,
-                      color: "#0f172a",
-                    }}
-                  >
-                    {station.station_name}
-                  </div>
-                  <div
-                    style={{
-                      marginTop: "0.25rem",
                       fontSize: "0.85rem",
-                      color: "#475569",
+                      color: "#4b5563",
                     }}
                   >
-                    Station #{station.station_id}
+                    No latest sensor data available.
                   </div>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gap: "0.35rem",
-                    fontSize: "0.9rem",
-                    color: "#1e293b",
-                  }}
-                >
-                  <div>
-                    Coordinates: {formatCoordinate(station.latitude)},{" "}
-                    {formatCoordinate(station.longitude)}
-                  </div>
-                  <div>Latest update: {formatDateTime(station.latest_update)}</div>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gap: "0.5rem",
-                  }}
-                >
-                  {station.sensors.length === 0 ? (
-                    <div
-                      style={{
-                        fontSize: "0.9rem",
-                        color: "#475569",
-                      }}
-                    >
-                      No latest sensor data available.
-                    </div>
-                  ) : (
-                    station.sensors.map((sensor) => (
-                      <div
-                        key={`${station.station_id}-${sensor.sensor_id ?? sensor.sensor_name}`}
-                        style={{
-                          border: "1px solid #cbd5e1",
-                          borderRadius: "0.75rem",
-                          padding: "0.65rem 0.75rem",
-                          backgroundColor: "#f8fafc",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontWeight: 700,
-                            color: "#0f172a",
-                          }}
-                        >
-                          {sensor.sensor_name}
-                        </div>
-                        <div
-                          style={{
-                            marginTop: "0.2rem",
-                            fontSize: "0.9rem",
-                            color: "#1e293b",
-                          }}
-                        >
-                          Value: {formatValue(sensor.last_value)}
-                        </div>
-                        <div
-                          style={{
-                            marginTop: "0.2rem",
-                            fontSize: "0.85rem",
-                            color: "#475569",
-                          }}
-                        >
-                          Updated: {formatDateTime(sensor.last_update)}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+                ) : (
+                  <ul
+                    style={{
+                      margin: 0,
+                      paddingLeft: "1.15rem",
+                      display: "grid",
+                      gap: "0.28rem",
+                      color: "#111827",
+                      fontSize: "0.82rem",
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {station.sensors.map((sensor) => (
+                      <li key={`${station.station_id}-${sensor.sensor_id ?? sensor.sensor_name}`}>
+                        <span style={{ color: "#374151" }}>
+                          {formatDateTime(sensor.last_update)}
+                        </span>{" "}
+                        <strong>{sensor.sensor_name}</strong>: {formatValue(sensor.last_value)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </Popup>
           </Marker>

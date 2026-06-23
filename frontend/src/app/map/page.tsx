@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppShell from "../AppShell";
@@ -129,7 +130,7 @@ export default function MapPage() {
 
       <PageSection
         title="Station Overview"
-        description="Cards remain available below the map for quick scanning of sensor values and timestamps."
+        description="Compact station tables keep the latest readings visible without taking as much space as the previous cards."
       >
         {isLoading ? (
           <StateBox text="Loading station cards..." />
@@ -141,106 +142,12 @@ export default function MapPage() {
           <div
             style={{
               display: "grid",
-              gap: "1rem",
-              gridTemplateColumns: "repeat(auto-fit, minmax(18rem, 1fr))",
+              gap: "0.9rem",
+              gridTemplateColumns: "repeat(auto-fit, minmax(21rem, 1fr))",
             }}
           >
             {stations.map((station) => (
-              <article
-                key={station.station_id}
-                style={{
-                  backgroundColor: "#0b1220",
-                  border: "1px solid #24324a",
-                  borderRadius: "0.9rem",
-                  padding: "1rem",
-                  display: "grid",
-                  gap: "0.85rem",
-                }}
-              >
-                <div>
-                  <h3
-                    style={{
-                      margin: 0,
-                      fontSize: "1.05rem",
-                    }}
-                  >
-                    {station.station_name}
-                  </h3>
-                  <p
-                    style={{
-                      margin: "0.35rem 0 0",
-                      color: "#94a3b8",
-                      fontSize: "0.95rem",
-                    }}
-                  >
-                    Station #{station.station_id}
-                  </p>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gap: "0.35rem",
-                    color: "#cbd5e1",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  <div>
-                    Coordinates: {formatCoordinate(station.latitude)},{" "}
-                    {formatCoordinate(station.longitude)}
-                  </div>
-                  <div>
-                    Latest update: {formatDateTime(station.latest_update)}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gap: "0.45rem",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))",
-                  }}
-                >
-                  {station.sensors.length === 0 ? (
-                    <div
-                      style={{
-                        color: "#94a3b8",
-                        fontSize: "0.95rem",
-                      }}
-                    >
-                      No latest sensor data available.
-                    </div>
-                  ) : (
-                    station.sensors.map((sensor) => (
-                      <div
-                        key={`${station.station_id}-${sensor.sensor_id ?? sensor.sensor_name}`}
-                        style={{
-                          backgroundColor: "#111c30",
-                          border: "1px solid #1f2b3f",
-                          borderRadius: "0.75rem",
-                          padding: "0.75rem 0.85rem",
-                          color: "#cbd5e1",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontWeight: 600,
-                            color: "#f8fafc",
-                          }}
-                        >
-                          {sensor.sensor_name}
-                        </div>
-                        <div style={{ marginTop: "0.25rem" }}>
-                          Value: {formatValue(sensor.last_value)}
-                        </div>
-                        <div style={{ marginTop: "0.2rem", color: "#94a3b8" }}>
-                          Updated: {formatDateTime(sensor.last_update)}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </article>
+              <CompactStationTable key={station.station_id} station={station} />
             ))}
           </div>
         )}
@@ -322,4 +229,128 @@ function StatusPill({ label, value }: StatusPillProps) {
       </span>
     </div>
   );
+}
+
+type CompactStationTableProps = {
+  station: StationSummary;
+};
+
+function CompactStationTable({ station }: CompactStationTableProps) {
+  return (
+    <article
+      style={{
+        border: "1px solid #3148c9",
+        borderRadius: "0.2rem",
+        backgroundColor: "#ffffff",
+        overflow: "hidden",
+        boxShadow: "0 2px 10px rgba(15, 23, 42, 0.08)",
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: "#151a8b",
+          color: "#ffffff",
+          padding: "0.35rem 0.55rem",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.75rem",
+          fontSize: "0.86rem",
+          fontWeight: 700,
+          lineHeight: 1.2,
+        }}
+      >
+        <span>
+          {station.station_name} ({String(station.station_id).padStart(2, "0")}) -
+        </span>
+        <span>{station.latest_update ? "Latest" : "No data"}</span>
+      </div>
+
+      {station.sensors.length === 0 ? (
+        <div
+          style={{
+            padding: "0.8rem",
+            fontSize: "0.82rem",
+            color: "#475569",
+          }}
+        >
+          No latest sensor data available.
+        </div>
+      ) : (
+        <div
+          style={{
+            padding: "0.55rem",
+          }}
+        >
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "0.79rem",
+              color: "#0f172a",
+            }}
+          >
+            <thead>
+              <tr style={{ backgroundColor: "#151a8b", color: "#ffffff" }}>
+                <th style={compactHeaderCellStyle}>Sensor</th>
+                <th style={compactHeaderCellStyle}>Value</th>
+                <th style={compactHeaderCellStyle}>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {station.sensors.map((sensor) => (
+                <tr key={`${station.station_id}-${sensor.sensor_id ?? sensor.sensor_name}`}>
+                  <td style={compactBodyCellStyle}>{sensor.sensor_name}</td>
+                  <td style={compactBodyCellStyle}>{formatValue(sensor.last_value)}</td>
+                  <td style={compactBodyCellStyle}>{formatCompactDateTime(sensor.last_update)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div
+            style={{
+              marginTop: "0.45rem",
+              fontSize: "0.72rem",
+              color: "#475569",
+            }}
+          >
+            Coords: {formatCoordinate(station.latitude)}, {formatCoordinate(station.longitude)}
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+const compactHeaderCellStyle: CSSProperties = {
+  padding: "0.33rem 0.45rem",
+  border: "1px solid #5060c7",
+  textAlign: "left",
+  fontWeight: 700,
+};
+
+const compactBodyCellStyle: CSSProperties = {
+  padding: "0.28rem 0.45rem",
+  border: "1px solid #cbd5e1",
+  verticalAlign: "top",
+};
+
+function formatCompactDateTime(value: string | null) {
+  if (!value) {
+    return "n/a";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString(undefined, {
+    year: "2-digit",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
