@@ -361,20 +361,128 @@ export default function ChartPage() {
   const hasEnabledSeries = activeSeries.length > 0;
   const hasPagedPoints = pagedSeries.length > 0 && chartRows.length > 0;
 
+  const zoomControls = hasEnabledSeries ? (
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.65rem", justifyContent: "flex-end" }}>
+      <ZoomButton onClick={zoomIn} label="Zoom in +" />
+      <ZoomButton onClick={zoomOut} label="Zoom out −" />
+      <ZoomButton onClick={zoomReset} label="Reset" />
+      {totalPages > 1 ? (
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          summary={buildPageSummary(activeTimestamps.length, currentPage, pointsPerPage)}
+          onPrevious={goToPreviousPage}
+          onNext={goToNextPage}
+        />
+      ) : null}
+    </div>
+  ) : null;
+
+  const seriesCards = (
+    <div style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(16rem, 1fr))" }}>
+      {allSeries.map((series) => {
+        const isEnabled = !hiddenSeriesKeys.includes(series.series_key);
+        const visibleSeriesEntry = pagedSeries.find((entry) => entry.series_key === series.series_key);
+        const seriesColor = seriesColorMap[series.series_key] ?? seriesColors[0];
+        return (
+          <label
+            key={series.series_key}
+            style={{
+              backgroundColor: isEnabled ? "#111c30" : "#0b1220",
+              border: `1px solid ${isEnabled ? "#24324a" : "#1f2b3f"}`,
+              borderRadius: "0.85rem",
+              padding: "1rem",
+              display: "grid",
+              gap: "0.6rem",
+              cursor: "pointer",
+              opacity: isEnabled ? 1 : 0.7,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.65rem", minWidth: 0 }}>
+                <span style={{ width: "0.9rem", height: "0.9rem", borderRadius: "999px", backgroundColor: seriesColor, display: "inline-block", flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <strong style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{series.station_name}</strong>
+                  <div style={{ color: "#cbd5e1", marginTop: "0.15rem" }}>{series.sensor_name}</div>
+                </div>
+              </div>
+              <input type="checkbox" checked={isEnabled} onChange={() => toggleSeries(series.series_key)} style={{ width: "1rem", height: "1rem", accentColor: "#0ea5e9", flexShrink: 0 }} />
+            </div>
+            <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>Points on page: {visibleSeriesEntry?.points.length ?? 0}</div>
+            <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>Range: {formatSeriesRange(visibleSeriesEntry?.points ?? [])}</div>
+          </label>
+        );
+      })}
+    </div>
+  );
+
+  const chartCanvas = (
+    <div style={{ backgroundColor: "#0b1220", border: "1px solid #24324a", borderRadius: "0.85rem", padding: "1rem" }}>
+      <div style={{ width: "100%", height: popupMode ? "65vh" : "24rem", minWidth: 0 }}>
+        <ResponsiveContainer width="100%" height="100%" debounce={150}>
+          <LineChart data={chartRows} margin={{ top: 12, right: 24, left: 8, bottom: 8 }}>
+            <CartesianGrid stroke="#1f2b3f" strokeDasharray="3 3" />
+            <XAxis dataKey="timestamp" tickFormatter={formatAxisTick} minTickGap={28} tick={{ fill: "#94a3b8", fontSize: 11 }} stroke="#334155" />
+            {pagedSeries.map((series) => (
+              <YAxis key={series.series_key} yAxisId={series.series_key} hide domain={buildSeriesDomain(series.points)} />
+            ))}
+            <RechartsTooltip content={<ChartTooltip />} cursor={{ stroke: "#64748b", strokeDasharray: "4 4" }} />
+            {pagedSeries.map((series) => (
+              <Line
+                key={series.series_key}
+                yAxisId={series.series_key}
+                dataKey={series.series_key}
+                name={`${series.station_name} - ${series.sensor_name}`}
+                type="monotone"
+                stroke={seriesColorMap[series.series_key] ?? seriesColors[0]}
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4 }}
+                isAnimationActive={false}
+                connectNulls={true}
+              />
+            ))}
+            <Brush dataKey="timestamp" height={28} stroke="#334155" fill="#0b1220" travellerWidth={8} startIndex={brushStartIndex} endIndex={brushEndIndex} onChange={handleBrushChange} tickFormatter={formatAxisTick} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+
+  if (popupMode) {
+    return (
+      <main style={{ minHeight: "100vh", backgroundColor: "#09111f", color: "#f8fafc", padding: "1.25rem", fontFamily: "system-ui, sans-serif" }}>
+        <div style={{ display: "grid", gap: "1rem" }}>
+          {zoomControls ? (
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>{zoomControls}</div>
+          ) : null}
+          {isBootstrapping ? (
+            <StateBox text="Loading chart..." />
+          ) : error ? (
+            <StateBox text={error} tone="error" />
+          ) : !results ? (
+            <StateBox text="Missing chart filters." />
+          ) : !hasSeries ? (
+            <StateBox text="No chart points were returned for the current filter set." />
+          ) : !hasEnabledSeries ? (
+            <StateBox text="All sensor series are disabled. Re-enable at least one checkbox below." />
+          ) : !hasPagedPoints ? (
+            <StateBox text="No chart points fall inside the current page window." />
+          ) : (
+            <div style={{ display: "grid", gap: "1rem" }}>
+              {chartCanvas}
+              {seriesCards}
+            </div>
+          )}
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <AppShell
-      title={popupMode ? "Chart Window" : "Charts"}
-      description={
-        popupMode
-          ? "This popup charts the current selection opened from DATA. You can open multiple chart windows to compare different selections."
-          : "This screen consumes the protected `/api/chart` endpoint and now renders the chart with Recharts for responsive multi-series exploration."
-      }
-    >
+    <AppShell title="Charts">
       {!popupMode ? (
-        <PageSection
-          title="Chart Filters"
-          description="The default chart uses one station, three sensors, and the last 24 hours so we can validate the real chart flow on live tenant data."
-        >
+        <PageSection title="Chart Filters">
           <form
             onSubmit={handleSubmit}
             style={{
@@ -459,40 +567,7 @@ export default function ChartPage() {
         </PageSection>
       ) : null}
 
-      <PageSection
-        title="Chart Preview"
-        description={
-          popupMode
-            ? "This window renders the chart for the filters selected in DATA."
-            : "Each line is now rendered by Recharts and each sensor card below can enable or disable the plotted curve in real time."
-        }
-        actions={
-          hasEnabledSeries ? (
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: "0.65rem",
-                justifyContent: "flex-end",
-              }}
-            >
-              <ZoomButton onClick={zoomIn} label="Zoom in +" />
-              <ZoomButton onClick={zoomOut} label="Zoom out −" />
-              <ZoomButton onClick={zoomReset} label="Reset" />
-              {totalPages > 1 ? (
-                <PaginationControls
-                  currentPage={currentPage}
-                  totalPages={totalPages}
-                  summary={buildPageSummary(activeTimestamps.length, currentPage, pointsPerPage)}
-                  onPrevious={goToPreviousPage}
-                  onNext={goToNextPage}
-                />
-              ) : null}
-            </div>
-          ) : null
-        }
-      >
+      <PageSection title="Chart" actions={zoomControls}>
         {isBootstrapping ? (
           <StateBox text="Loading chart filters..." />
         ) : error ? (
@@ -502,189 +577,13 @@ export default function ChartPage() {
         ) : !hasSeries ? (
           <StateBox text="No chart points were returned for the current filter set." />
         ) : !hasEnabledSeries ? (
-          <StateBox text="All sensor series are disabled. Re-enable at least one checkbox below to plot the chart again." />
+          <StateBox text="All sensor series are disabled. Re-enable at least one checkbox below." />
         ) : !hasPagedPoints ? (
           <StateBox text="No chart points fall inside the current page window." />
         ) : (
-          <div
-            style={{
-              display: "grid",
-              gap: "1rem",
-            }}
-          >
-            <div
-              style={{
-                backgroundColor: "#0b1220",
-                border: "1px solid #24324a",
-                borderRadius: "0.85rem",
-                padding: "1rem",
-              }}
-            >
-              <div
-                style={{
-                  width: "100%",
-                  height: "24rem",
-                  minWidth: 0,
-                }}
-              >
-                <ResponsiveContainer width="100%" height="100%" debounce={150}>
-                  <LineChart
-                    data={chartRows}
-                    margin={{ top: 12, right: 24, left: 8, bottom: 8 }}
-                  >
-                    <CartesianGrid stroke="#1f2b3f" strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="timestamp"
-                      tickFormatter={formatAxisTick}
-                      minTickGap={28}
-                      tick={{ fill: "#94a3b8", fontSize: 11 }}
-                      stroke="#334155"
-                    />
-                    {pagedSeries.map((series) => (
-                      <YAxis
-                        key={series.series_key}
-                        yAxisId={series.series_key}
-                        hide
-                        domain={buildSeriesDomain(series.points)}
-                      />
-                    ))}
-                    <RechartsTooltip
-                      content={<ChartTooltip />}
-                      cursor={{ stroke: "#64748b", strokeDasharray: "4 4" }}
-                    />
-                    {pagedSeries.map((series) => (
-                      <Line
-                        key={series.series_key}
-                        yAxisId={series.series_key}
-                        dataKey={series.series_key}
-                        name={`${series.station_name} - ${series.sensor_name}`}
-                        type="monotone"
-                        stroke={seriesColorMap[series.series_key] ?? seriesColors[0]}
-                        strokeWidth={2.5}
-                        dot={false}
-                        activeDot={{ r: 4 }}
-                        isAnimationActive={false}
-                        connectNulls={true}
-                      />
-                    ))}
-                    <Brush
-                      dataKey="timestamp"
-                      height={28}
-                      stroke="#334155"
-                      fill="#0b1220"
-                      travellerWidth={8}
-                      startIndex={brushStartIndex}
-                      endIndex={brushEndIndex}
-                      onChange={handleBrushChange}
-                      tickFormatter={formatAxisTick}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gap: "0.75rem",
-                gridTemplateColumns: "repeat(auto-fit, minmax(16rem, 1fr))",
-              }}
-            >
-              {allSeries.map((series) => {
-                const isEnabled = !hiddenSeriesKeys.includes(series.series_key);
-                const visibleSeriesEntry = pagedSeries.find(
-                  (entry) => entry.series_key === series.series_key
-                );
-                const seriesColor = seriesColorMap[series.series_key] ?? seriesColors[0];
-
-                return (
-                  <label
-                    key={series.series_key}
-                    style={{
-                      backgroundColor: isEnabled ? "#111c30" : "#0b1220",
-                      border: `1px solid ${isEnabled ? "#24324a" : "#1f2b3f"}`,
-                      borderRadius: "0.85rem",
-                      padding: "1rem",
-                      display: "grid",
-                      gap: "0.6rem",
-                      cursor: "pointer",
-                      opacity: isEnabled ? 1 : 0.7,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: "0.75rem",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.65rem",
-                          minWidth: 0,
-                        }}
-                      >
-                        <span
-                          style={{
-                            width: "0.9rem",
-                            height: "0.9rem",
-                            borderRadius: "999px",
-                            backgroundColor: seriesColor,
-                            display: "inline-block",
-                            flexShrink: 0,
-                          }}
-                        />
-                        <div style={{ minWidth: 0 }}>
-                          <strong
-                            style={{
-                              display: "block",
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}
-                          >
-                            {series.station_name}
-                          </strong>
-                          <div
-                            style={{
-                              color: "#cbd5e1",
-                              marginTop: "0.15rem",
-                            }}
-                          >
-                            {series.sensor_name}
-                          </div>
-                        </div>
-                      </div>
-
-                      <input
-                        type="checkbox"
-                        checked={isEnabled}
-                        onChange={() => toggleSeries(series.series_key)}
-                        style={{
-                          width: "1rem",
-                          height: "1rem",
-                          accentColor: "#0ea5e9",
-                          flexShrink: 0,
-                        }}
-                      />
-                    </div>
-
-                    <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
-                      Points on page: {visibleSeriesEntry?.points.length ?? 0}
-                    </div>
-                    <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
-                      Range on page: {formatSeriesRange(visibleSeriesEntry?.points ?? [])}
-                    </div>
-                    <div style={{ color: "#64748b", fontSize: "0.82rem" }}>
-                      {isEnabled ? "Visible on chart" : "Hidden from chart"}
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
+          <div style={{ display: "grid", gap: "1rem" }}>
+            {chartCanvas}
+            {seriesCards}
           </div>
         )}
       </PageSection>

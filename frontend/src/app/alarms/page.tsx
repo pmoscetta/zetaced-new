@@ -64,13 +64,9 @@ export default function AlarmsPage() {
   }, [loadAlarms]);
 
   return (
-    <AppShell
-      title="Log / Alarms"
-      description="The latest 50 records from the client message log, refreshed automatically every 30 seconds."
-    >
+    <AppShell title="Log / Alarms">
       <PageSection
         title="Alarm Feed"
-        description="Rows are colour-coded by severity: red for alarms, yellow for warnings, and neutral for informational messages."
         actions={
           <button
             type="button"

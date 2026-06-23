@@ -14,7 +14,7 @@ import {
 
 type AppShellProps = {
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
 };
 
@@ -211,35 +211,6 @@ export default function AppShell({
             gap: "1.25rem",
           }}
         >
-          <div
-            style={{
-              backgroundColor: "#111c30",
-              border: "1px solid #24324a",
-              borderRadius: "1rem",
-              padding: "1.25rem",
-            }}
-          >
-            <p
-              style={{
-                margin: 0,
-                color: "#38bdf8",
-                textTransform: "uppercase",
-                letterSpacing: "0.12em",
-                fontSize: "0.75rem",
-              }}
-            >
-              {activeItemLabel}
-            </p>
-            <p
-              style={{
-                margin: "0.5rem 0 0",
-                color: "#cbd5e1",
-                lineHeight: 1.6,
-              }}
-            >
-              {description}
-            </p>
-          </div>
 
           {children}
         </section>

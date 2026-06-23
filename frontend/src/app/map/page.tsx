@@ -70,13 +70,9 @@ export default function MapPage() {
   const hiddenStationsCount = stations.length - mappedStationsCount;
 
   return (
-    <AppShell
-      title="Monitoring Map"
-      description="Interactive Leaflet map of the authenticated tenant stations with live sensor popups and automatic refresh every 60 seconds."
-    >
+    <AppShell title="Monitoring Map">
       <PageSection
         title="Station Map"
-        description="The map uses the same protected `/api/stations` payload and plots every station that has valid coordinates."
         actions={
           <button
             onClick={() => void loadStations(true)}
@@ -128,10 +124,7 @@ export default function MapPage() {
         )}
       </PageSection>
 
-      <PageSection
-        title="Station Overview"
-        description="Compact station tables keep the latest readings visible without taking as much space as the previous cards."
-      >
+      <PageSection title="Station Overview">
         {isLoading ? (
           <StateBox text="Loading station cards..." />
         ) : error ? (

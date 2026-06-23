@@ -40,7 +40,7 @@ type DataResponse = {
   rows: DataRow[];
 };
 
-const DATA_PAGE_SIZE = 100;
+const DATA_PAGE_SIZE = 50;
 
 export default function DataPage() {
   const [stations, setStations] = useState<StationOption[]>([]);
@@ -83,26 +83,6 @@ export default function DataPage() {
 
         setStations(stationOptions);
         setSensors(sensorPayload);
-
-        const defaultStationIds = stationOptions[0]
-          ? [stationOptions[0].station_id]
-          : [];
-        const defaultSensorIds = sensorPayload
-          .slice(0, 3)
-          .map((sensor) => sensor.sensor_type_id);
-
-        setSelectedStationIds(defaultStationIds);
-        setSelectedSensorIds(defaultSensorIds);
-
-        if (defaultStationIds.length > 0 && defaultSensorIds.length > 0) {
-          await loadData(
-            defaultStationIds,
-            defaultSensorIds,
-            getDefaultDateFrom(),
-            getDefaultDateTo(),
-            "300"
-          );
-        }
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
@@ -312,14 +292,8 @@ export default function DataPage() {
   }
 
   return (
-    <AppShell
-      title="Aligned Data"
-      description="This screen now runs against the real protected `/api/data` endpoint with live station and sensor filters."
-    >
-      <PageSection
-        title="Data Filters"
-        description="The default query loads one station and the first three sensors from the last 24 hours so the page stays fast while we validate the product."
-      >
+    <AppShell title="Aligned Data">
+      <PageSection title="Data Filters">
         <form
           onSubmit={handleSubmit}
           style={{
@@ -403,7 +377,6 @@ export default function DataPage() {
 
       <PageSection
         title="Aligned Results"
-        description="The table below groups readings by the selected alignment window and renders one column for each requested station and sensor combination."
         actions={
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem" }}>
             <button
