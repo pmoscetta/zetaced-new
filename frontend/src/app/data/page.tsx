@@ -305,7 +305,8 @@ export default function DataPage() {
             style={{
               display: "grid",
               gap: "1rem",
-              gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
+              gridTemplateColumns: "minmax(11rem, 1.8fr) minmax(11rem, 1.8fr) minmax(10rem, 1fr) minmax(10rem, 1fr) minmax(7rem, 0.55fr)",
+              alignItems: "start",
             }}
           >
             <MultiSelectField
