@@ -4,6 +4,8 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import AppShell from "../AppShell";
+import DateTimePickerField from "../DateTimePickerField";
+import PaginationControls from "../PaginationControls";
 import PageSection from "../PageSection";
 import { fetchProtectedJson } from "../protected-api";
 
@@ -37,15 +39,18 @@ type DataResponse = {
   rows: DataRow[];
 };
 
+const DATA_PAGE_SIZE = 100;
+
 export default function DataPage() {
   const [stations, setStations] = useState<StationOption[]>([]);
   const [sensors, setSensors] = useState<SensorOption[]>([]);
   const [selectedStationIds, setSelectedStationIds] = useState<number[]>([]);
   const [selectedSensorIds, setSelectedSensorIds] = useState<number[]>([]);
-  const [dateFrom, setDateFrom] = useState(getDefaultDateFrom());
-  const [dateTo, setDateTo] = useState(getDefaultDateTo());
+  const [dateFrom, setDateFrom] = useState<Date | null>(getDefaultDateFrom());
+  const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [alignmentSeconds, setAlignmentSeconds] = useState("300");
   const [results, setResults] = useState<DataResponse | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
@@ -85,7 +90,13 @@ export default function DataPage() {
         setSelectedSensorIds(defaultSensorIds);
 
         if (defaultStationIds.length > 0 && defaultSensorIds.length > 0) {
-          await loadData(defaultStationIds, defaultSensorIds, dateFrom, dateTo, alignmentSeconds);
+          await loadData(
+            defaultStationIds,
+            defaultSensorIds,
+            getDefaultDateFrom(),
+            getDefaultDateTo(),
+            "300"
+          );
         }
       } catch (caughtError) {
         setError(
@@ -102,17 +113,23 @@ export default function DataPage() {
   }, []);
 
   const visibleColumns = useMemo(() => results?.columns ?? [], [results]);
-  const visibleRows = useMemo(() => results?.rows ?? [], [results]);
+  const allRows = useMemo(() => results?.rows ?? [], [results]);
+  const totalPages = Math.max(1, Math.ceil(allRows.length / DATA_PAGE_SIZE));
+  const visibleRows = useMemo(() => {
+    const startIndex = (currentPage - 1) * DATA_PAGE_SIZE;
+    return allRows.slice(startIndex, startIndex + DATA_PAGE_SIZE);
+  }, [allRows, currentPage]);
 
   async function loadData(
     stationIds: number[],
     sensorIds: number[],
-    requestedDateFrom: string,
-    requestedDateTo: string,
+    requestedDateFrom: Date | null,
+    requestedDateTo: Date | null,
     requestedAlignmentSeconds: string
   ) {
     if (stationIds.length === 0 || sensorIds.length === 0) {
       setResults(null);
+      setCurrentPage(1);
       return;
     }
 
@@ -127,10 +144,10 @@ export default function DataPage() {
         params.append("sensor_ids", String(sensorId));
       });
       if (requestedDateFrom) {
-        params.set("date_from", new Date(requestedDateFrom).toISOString());
+        params.set("date_from", requestedDateFrom.toISOString());
       }
       if (requestedDateTo) {
-        params.set("date_to", new Date(requestedDateTo).toISOString());
+        params.set("date_to", requestedDateTo.toISOString());
       }
       params.set("alignment_seconds", requestedAlignmentSeconds || "300");
 
@@ -138,9 +155,11 @@ export default function DataPage() {
         `/data?${params.toString()}`
       );
       setResults(payload);
+      setCurrentPage(1);
       setError("");
     } catch (caughtError) {
       setResults(null);
+      setCurrentPage(1);
       setError(
         caughtError instanceof Error
           ? caughtError.message
@@ -175,10 +194,10 @@ export default function DataPage() {
       params.append("sensor_ids", String(sensorId));
     });
     if (dateFrom) {
-      params.set("date_from", new Date(dateFrom).toISOString());
+      params.set("date_from", dateFrom.toISOString());
     }
     if (dateTo) {
-      params.set("date_to", new Date(dateTo).toISOString());
+      params.set("date_to", dateTo.toISOString());
     }
     params.set("alignment_seconds", alignmentSeconds || "300");
     params.set("popup", "1");
@@ -190,6 +209,14 @@ export default function DataPage() {
       popupName,
       "popup=yes,width=1440,height=900,resizable=yes,scrollbars=yes"
     );
+  }
+
+  function goToPreviousPage() {
+    setCurrentPage((page) => Math.max(1, page - 1));
+  }
+
+  function goToNextPage() {
+    setCurrentPage((page) => Math.min(totalPages, page + 1));
   }
 
   return (
@@ -235,16 +262,14 @@ export default function DataPage() {
               onChange={setSelectedSensorIds}
               disabled={isBootstrapping}
             />
-            <Field
+            <DateTimePickerField
               label="From"
-              type="datetime-local"
-              value={dateFrom}
+              selected={dateFrom}
               onChange={setDateFrom}
             />
-            <Field
+            <DateTimePickerField
               label="To"
-              type="datetime-local"
-              value={dateTo}
+              selected={dateTo}
               onChange={setDateTo}
             />
             <Field
@@ -278,7 +303,7 @@ export default function DataPage() {
                 fontSize: "0.95rem",
               }}
             >
-              Current result: {visibleRows.length} rows, {visibleColumns.length} columns
+              Current result: {allRows.length} rows, {visibleColumns.length} columns
             </span>
           </div>
         </form>
@@ -309,80 +334,90 @@ export default function DataPage() {
         ) : visibleRows.length === 0 ? (
           <StateBox text="No aligned rows were returned for the current filter set." />
         ) : (
-          <div
-            style={{
-              overflowX: "auto",
-              border: "1px solid #24324a",
-              borderRadius: "0.85rem",
-            }}
-          >
-            <table
+          <div style={{ display: "grid", gap: "0.9rem" }}>
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={totalPages}
+              summary={buildPageSummary(allRows.length, currentPage, DATA_PAGE_SIZE)}
+              onPrevious={goToPreviousPage}
+              onNext={goToNextPage}
+            />
+
+            <div
               style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                minWidth: `${Math.max(48, 18 + visibleColumns.length * 10)}rem`,
+                overflowX: "auto",
+                border: "1px solid #24324a",
+                borderRadius: "0.85rem",
               }}
             >
-              <thead
+              <table
                 style={{
-                  backgroundColor: "#0b1220",
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  minWidth: `${Math.max(48, 18 + visibleColumns.length * 10)}rem`,
                 }}
               >
-                <tr>
-                  <HeaderCell>Date</HeaderCell>
-                  <HeaderCell>Time</HeaderCell>
-                  {visibleColumns.map((column) => (
-                    <HeaderCell key={column.column_key}>
-                      <div>{column.station_name}</div>
-                      <div
-                        style={{
-                          marginTop: "0.25rem",
-                          color: "#cbd5e1",
-                          fontWeight: 500,
-                          fontSize: "0.85rem",
-                          lineHeight: 1.35,
-                        }}
-                      >
-                        {column.sensor_name}
-                      </div>
-                    </HeaderCell>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.slice(0, 250).map((row, index) => (
-                  <tr
-                    key={`${row.timestamp}-${index}`}
-                    style={{
-                      backgroundColor: index % 2 === 0 ? "#111c30" : "#0d1728",
-                    }}
-                  >
-                    <BodyCell>{row.date_label}</BodyCell>
-                    <BodyCell>
-                      <div
-                        style={{
-                          display: "grid",
-                          gap: "0.15rem",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {row.time_labels.map((timeLabel) => (
-                          <span key={timeLabel}>{timeLabel}</span>
-                        ))}
-                      </div>
-                    </BodyCell>
+                <thead
+                  style={{
+                    backgroundColor: "#0b1220",
+                  }}
+                >
+                  <tr>
+                    <HeaderCell>Date</HeaderCell>
+                    <HeaderCell>Time</HeaderCell>
                     {visibleColumns.map((column) => (
-                      <BodyCell key={column.column_key}>
-                        {formatTableValue(row.values[column.column_key] ?? null)}
-                      </BodyCell>
+                      <HeaderCell key={column.column_key}>
+                        <div>{column.station_name}</div>
+                        <div
+                          style={{
+                            marginTop: "0.25rem",
+                            color: "#cbd5e1",
+                            fontWeight: 500,
+                            fontSize: "0.85rem",
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {column.sensor_name}
+                        </div>
+                      </HeaderCell>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {visibleRows.map((row, index) => (
+                    <tr
+                      key={`${row.timestamp}-${currentPage}-${index}`}
+                      style={{
+                        backgroundColor: index % 2 === 0 ? "#111c30" : "#0d1728",
+                      }}
+                    >
+                      <BodyCell>{row.date_label}</BodyCell>
+                      <BodyCell>
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: "0.15rem",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {row.time_labels.map((timeLabel) => (
+                            <span key={timeLabel}>{timeLabel}</span>
+                          ))}
+                        </div>
+                      </BodyCell>
+                      {visibleColumns.map((column) => (
+                        <BodyCell key={column.column_key}>
+                          {formatTableValue(row.values[column.column_key] ?? null)}
+                        </BodyCell>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
-        {results && visibleRows.length > 250 ? (
+        {results && allRows.length > DATA_PAGE_SIZE ? (
           <p
             style={{
               marginTop: "0.9rem",
@@ -391,8 +426,8 @@ export default function DataPage() {
               lineHeight: 1.6,
             }}
           >
-            Showing the first 250 rows in the UI to keep the page responsive.
-            The API returned {visibleRows.length} rows total.
+            Use the arrows to browse the result set in blocks of {DATA_PAGE_SIZE} rows.
+            The API returned {allRows.length} rows total.
           </p>
         ) : null}
       </PageSection>
@@ -576,16 +611,16 @@ function formatTableValue(value: number | null) {
 }
 
 function getDefaultDateFrom() {
-  const date = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  return toDateTimeLocalValue(date);
+  return new Date(Date.now() - 24 * 60 * 60 * 1000);
 }
 
 function getDefaultDateTo() {
-  return toDateTimeLocalValue(new Date());
+  return new Date();
 }
 
-function toDateTimeLocalValue(value: Date) {
-  const offset = value.getTimezoneOffset();
-  const localValue = new Date(value.getTime() - offset * 60 * 1000);
-  return localValue.toISOString().slice(0, 16);
+function buildPageSummary(totalRows: number, currentPage: number, pageSize: number) {
+  const startIndex = (currentPage - 1) * pageSize + 1;
+  const endIndex = Math.min(totalRows, currentPage * pageSize);
+
+  return `Showing rows ${startIndex}-${endIndex} of ${totalRows}`;
 }

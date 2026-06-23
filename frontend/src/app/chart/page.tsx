@@ -4,6 +4,8 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import AppShell from "../AppShell";
+import DateTimePickerField from "../DateTimePickerField";
+import PaginationControls from "../PaginationControls";
 import PageSection from "../PageSection";
 import { fetchProtectedJson } from "../protected-api";
 
@@ -35,6 +37,17 @@ type ChartResponse = {
   series: ChartSeries[];
 };
 
+type HoveredPoint = {
+  stationName: string;
+  sensorName: string;
+  timestamp: string;
+  value: number;
+  x: number;
+  y: number;
+  color: string;
+};
+
+const CHART_PAGE_SIZE = 100;
 const seriesColors = [
   "#38bdf8",
   "#22c55e",
@@ -52,9 +65,11 @@ export default function ChartPage() {
   const [sensors, setSensors] = useState<SensorOption[]>([]);
   const [selectedStationIds, setSelectedStationIds] = useState<number[]>([]);
   const [selectedSensorIds, setSelectedSensorIds] = useState<number[]>([]);
-  const [dateFrom, setDateFrom] = useState(getDefaultDateFrom());
-  const [dateTo, setDateTo] = useState(getDefaultDateTo());
+  const [dateFrom, setDateFrom] = useState<Date | null>(getDefaultDateFrom());
+  const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [results, setResults] = useState<ChartResponse | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hoveredPoint, setHoveredPoint] = useState<HoveredPoint | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
@@ -66,7 +81,6 @@ export default function ChartPage() {
         const popupConfig = getPopupChartConfig();
         if (popupConfig) {
           setPopupMode(true);
-
           setSelectedStationIds(popupConfig.stationIds);
           setSelectedSensorIds(popupConfig.sensorIds);
           setDateFrom(popupConfig.dateFrom);
@@ -88,7 +102,6 @@ export default function ChartPage() {
         }
 
         setPopupMode(false);
-
         const [stationPayload, sensorPayload] = await Promise.all([
           fetchProtectedJson<
             Array<{
@@ -118,7 +131,12 @@ export default function ChartPage() {
         setSelectedSensorIds(defaultSensorIds);
 
         if (defaultStationIds.length > 0 && defaultSensorIds.length > 0) {
-          await loadChart(defaultStationIds, defaultSensorIds, dateFrom, dateTo);
+          await loadChart(
+            defaultStationIds,
+            defaultSensorIds,
+            getDefaultDateFrom(),
+            getDefaultDateTo()
+          );
         }
       } catch (caughtError) {
         setError(
@@ -134,17 +152,47 @@ export default function ChartPage() {
     loadPage();
   }, []);
 
-  const visibleSeries = useMemo(() => results?.series ?? [], [results]);
+  const allSeries = useMemo(() => results?.series ?? [], [results]);
+  const allTimestamps = useMemo(() => {
+    const uniqueTimestamps = new Set<string>();
+    for (const series of allSeries) {
+      for (const point of series.points) {
+        uniqueTimestamps.add(point.timestamp);
+      }
+    }
+
+    return Array.from(uniqueTimestamps).sort(
+      (left, right) => new Date(left).getTime() - new Date(right).getTime()
+    );
+  }, [allSeries]);
+  const totalPages = Math.max(1, Math.ceil(allTimestamps.length / CHART_PAGE_SIZE));
+  const visibleTimestampKeys = useMemo(() => {
+    const startIndex = (currentPage - 1) * CHART_PAGE_SIZE;
+    return allTimestamps.slice(startIndex, startIndex + CHART_PAGE_SIZE);
+  }, [allTimestamps, currentPage]);
+  const visibleTimestampSet = useMemo(
+    () => new Set(visibleTimestampKeys),
+    [visibleTimestampKeys]
+  );
+  const visibleSeries = useMemo(() => {
+    return allSeries
+      .map((series) => ({
+        ...series,
+        points: series.points.filter((point) => visibleTimestampSet.has(point.timestamp)),
+      }))
+      .filter((series) => series.points.length > 0);
+  }, [allSeries, visibleTimestampSet]);
   const chartGeometry = useMemo(() => buildChartGeometry(visibleSeries), [visibleSeries]);
 
   async function loadChart(
     stationIds: number[],
     sensorIds: number[],
-    requestedDateFrom: string,
-    requestedDateTo: string
+    requestedDateFrom: Date | null,
+    requestedDateTo: Date | null
   ) {
     if (stationIds.length === 0 || sensorIds.length === 0) {
       setResults(null);
+      setCurrentPage(1);
       return;
     }
 
@@ -159,19 +207,21 @@ export default function ChartPage() {
         params.append("sensor_ids", String(sensorId));
       });
       if (requestedDateFrom) {
-        params.set("date_from", new Date(requestedDateFrom).toISOString());
+        params.set("date_from", requestedDateFrom.toISOString());
       }
       if (requestedDateTo) {
-        params.set("date_to", new Date(requestedDateTo).toISOString());
+        params.set("date_to", requestedDateTo.toISOString());
       }
 
       const payload = await fetchProtectedJson<ChartResponse>(
         `/chart?${params.toString()}`
       );
       setResults(payload);
+      setCurrentPage(1);
       setError("");
     } catch (caughtError) {
       setResults(null);
+      setCurrentPage(1);
       setError(
         caughtError instanceof Error
           ? caughtError.message
@@ -185,6 +235,49 @@ export default function ChartPage() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await loadChart(selectedStationIds, selectedSensorIds, dateFrom, dateTo);
+  }
+
+  function goToPreviousPage() {
+    setHoveredPoint(null);
+    setCurrentPage((page) => Math.max(1, page - 1));
+  }
+
+  function goToNextPage() {
+    setHoveredPoint(null);
+    setCurrentPage((page) => Math.min(totalPages, page + 1));
+  }
+
+  function handleSeriesHover(
+    event: React.MouseEvent<SVGPathElement>,
+    series: (typeof chartGeometry.series)[number],
+    color: string
+  ) {
+    const svgElement = event.currentTarget.ownerSVGElement;
+    if (!svgElement || series.points.length === 0) {
+      return;
+    }
+
+    const rect = svgElement.getBoundingClientRect();
+    const pointerX = ((event.clientX - rect.left) / rect.width) * 960;
+    const closestPoint = series.points.reduce((closest, candidate) => {
+      if (!closest) {
+        return candidate;
+      }
+
+      return Math.abs(candidate.x - pointerX) < Math.abs(closest.x - pointerX)
+        ? candidate
+        : closest;
+    }, series.points[0]);
+
+    setHoveredPoint({
+      stationName: series.station_name,
+      sensorName: series.sensor_name,
+      timestamp: closestPoint.timestamp,
+      value: closestPoint.value,
+      x: closestPoint.x,
+      y: closestPoint.y,
+      color,
+    });
   }
 
   return (
@@ -235,16 +328,14 @@ export default function ChartPage() {
                 onChange={setSelectedSensorIds}
                 disabled={isBootstrapping}
               />
-              <Field
+              <DateTimePickerField
                 label="From"
-                type="datetime-local"
-                value={dateFrom}
+                selected={dateFrom}
                 onChange={setDateFrom}
               />
-              <Field
+              <DateTimePickerField
                 label="To"
-                type="datetime-local"
-                value={dateTo}
+                selected={dateTo}
                 onChange={setDateTo}
               />
             </div>
@@ -280,7 +371,7 @@ export default function ChartPage() {
                   fontSize: "0.95rem",
                 }}
               >
-                Current result: {visibleSeries.length} series
+                Current result: {allSeries.length} series, {allTimestamps.length} timestamps
               </span>
             </div>
           </form>
@@ -293,6 +384,17 @@ export default function ChartPage() {
           popupMode
             ? "This window renders the chart for the filters selected in DATA."
             : "Each line represents one station and sensor combination returned by `/api/chart`."
+        }
+        actions={
+          visibleSeries.length > 0 ? (
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={totalPages}
+              summary={buildPageSummary(allTimestamps.length, currentPage, CHART_PAGE_SIZE)}
+              onPrevious={goToPreviousPage}
+              onNext={goToNextPage}
+            />
+          ) : null
         }
       >
         {isBootstrapping ? (
@@ -350,8 +452,72 @@ export default function ChartPage() {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
+                    <path
+                      d={series.path}
+                      fill="none"
+                      stroke="transparent"
+                      strokeWidth="16"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      onMouseMove={(event) =>
+                        handleSeriesHover(
+                          event,
+                          series,
+                          seriesColors[index % seriesColors.length]
+                        )
+                      }
+                      onMouseLeave={() => setHoveredPoint(null)}
+                    />
                   </g>
                 ))}
+                {hoveredPoint ? (
+                  <g pointerEvents="none">
+                    <circle
+                      cx={hoveredPoint.x}
+                      cy={hoveredPoint.y}
+                      r="5"
+                      fill={hoveredPoint.color}
+                      stroke="#f8fafc"
+                      strokeWidth="2"
+                    />
+                    <rect
+                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 190 : hoveredPoint.x + 12}
+                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 12 : hoveredPoint.y - 70}
+                      rx="10"
+                      ry="10"
+                      width="178"
+                      height="58"
+                      fill="#08111d"
+                      stroke="#334155"
+                    />
+                    <text
+                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 178 : hoveredPoint.x + 24}
+                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 32 : hoveredPoint.y - 50}
+                      fill="#f8fafc"
+                      fontSize="12"
+                      fontWeight="700"
+                    >
+                      {hoveredPoint.stationName} - {hoveredPoint.sensorName}
+                    </text>
+                    <text
+                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 178 : hoveredPoint.x + 24}
+                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 48 : hoveredPoint.y - 34}
+                      fill="#cbd5e1"
+                      fontSize="11"
+                    >
+                      {formatTooltipTimestamp(hoveredPoint.timestamp)}
+                    </text>
+                    <text
+                      x={hoveredPoint.x > 760 ? hoveredPoint.x - 178 : hoveredPoint.x + 24}
+                      y={hoveredPoint.y < 90 ? hoveredPoint.y + 64 : hoveredPoint.y - 18}
+                      fill="#38bdf8"
+                      fontSize="12"
+                      fontWeight="700"
+                    >
+                      Value: {formatValue(hoveredPoint.value)}
+                    </text>
+                  </g>
+                ) : null}
               </svg>
             </div>
 
@@ -394,10 +560,10 @@ export default function ChartPage() {
                   </div>
                   <div style={{ color: "#cbd5e1" }}>{series.sensor_name}</div>
                   <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
-                    Points: {series.points.length}
+                    Points on page: {series.points.length}
                   </div>
                   <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
-                    Range: {formatSeriesRange(series.points)}
+                    Range on page: {formatSeriesRange(series.points)}
                   </div>
                 </div>
               ))}
@@ -551,7 +717,18 @@ function buildChartGeometry(series: ChartSeries[]) {
         x2: number;
         y2: number;
       }>,
-      series: [] as Array<{ series_key: string; path: string }>,
+      series: [] as Array<{
+        series_key: string;
+        station_name: string;
+        sensor_name: string;
+        path: string;
+        points: Array<{
+          x: number;
+          y: number;
+          timestamp: string;
+          value: number;
+        }>;
+      }>,
     };
   }
 
@@ -586,23 +763,36 @@ function buildChartGeometry(series: ChartSeries[]) {
   return {
     gridLines,
     series: series.map((entry) => {
-      const path = entry.points
+      const plottedPoints = entry.points.map((point) => {
+        const timeValue = new Date(point.timestamp).getTime();
+        const x =
+          left +
+          ((timeValue - minTime) / safeTimeRange) * (chartWidth - left - right);
+        const y =
+          chartHeight -
+          bottom -
+          ((point.value - minValue) / safeValueRange) * (chartHeight - top - bottom);
+
+        return {
+          x,
+          y,
+          timestamp: point.timestamp,
+          value: point.value,
+        };
+      });
+
+      const path = plottedPoints
         .map((point, index) => {
-          const timeValue = new Date(point.timestamp).getTime();
-          const x =
-            left +
-            ((timeValue - minTime) / safeTimeRange) * (chartWidth - left - right);
-          const y =
-            chartHeight -
-            bottom -
-            ((point.value - minValue) / safeValueRange) * (chartHeight - top - bottom);
-          return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+          return `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
         })
         .join(" ");
 
       return {
         series_key: entry.series_key,
+        station_name: entry.station_name,
+        sensor_name: entry.sensor_name,
         path,
+        points: plottedPoints,
       };
     }),
   };
@@ -623,27 +813,36 @@ function formatValue(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
+function formatTooltipTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
 function getDefaultDateFrom() {
-  const date = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  return toDateTimeLocalValue(date);
+  return new Date(Date.now() - 24 * 60 * 60 * 1000);
 }
 
 function getDefaultDateTo() {
-  return toDateTimeLocalValue(new Date());
+  return new Date();
 }
 
-function toDateTimeLocalValue(value: Date) {
-  const offset = value.getTimezoneOffset();
-  const localValue = new Date(value.getTime() - offset * 60 * 1000);
-  return localValue.toISOString().slice(0, 16);
+function buildPageSummary(totalTimestamps: number, currentPage: number, pageSize: number) {
+  const startIndex = (currentPage - 1) * pageSize + 1;
+  const endIndex = Math.min(totalTimestamps, currentPage * pageSize);
+
+  return `Showing timestamps ${startIndex}-${endIndex} of ${totalTimestamps}`;
 }
 
 function getPopupChartConfig():
   | {
       stationIds: number[];
       sensorIds: number[];
-      dateFrom: string;
-      dateTo: string;
+      dateFrom: Date | null;
+      dateTo: Date | null;
     }
   | null {
   if (typeof window === "undefined") {
@@ -664,16 +863,12 @@ function getPopupChartConfig():
       .getAll("sensor_ids")
       .map((value) => Number(value))
       .filter((value) => Number.isFinite(value)),
-    dateFrom:
-      toDateTimeLocalValueFromIso(searchParams.get("date_from")) ??
-      getDefaultDateFrom(),
-    dateTo:
-      toDateTimeLocalValueFromIso(searchParams.get("date_to")) ??
-      getDefaultDateTo(),
+    dateFrom: toDateFromIso(searchParams.get("date_from")),
+    dateTo: toDateFromIso(searchParams.get("date_to")),
   };
 }
 
-function toDateTimeLocalValueFromIso(value: string | null) {
+function toDateFromIso(value: string | null) {
   if (!value) {
     return null;
   }
@@ -683,5 +878,5 @@ function toDateTimeLocalValueFromIso(value: string | null) {
     return null;
   }
 
-  return toDateTimeLocalValue(date);
+  return date;
 }
