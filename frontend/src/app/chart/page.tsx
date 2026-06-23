@@ -43,7 +43,7 @@ type CrosshairState = {
   x: number;
 };
 
-const CHART_PAGE_SIZE = 100;
+const DEFAULT_CHART_PAGE_SIZE = 500;
 const seriesColors = [
   "#38bdf8",
   "#22c55e",
@@ -65,6 +65,9 @@ export default function ChartPage() {
   const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [results, setResults] = useState<ChartResponse | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pointsPerPageInput, setPointsPerPageInput] = useState(
+    String(DEFAULT_CHART_PAGE_SIZE)
+  );
   const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
@@ -161,11 +164,15 @@ export default function ChartPage() {
       (left, right) => new Date(left).getTime() - new Date(right).getTime()
     );
   }, [allSeries]);
-  const totalPages = Math.max(1, Math.ceil(allTimestamps.length / CHART_PAGE_SIZE));
+  const pointsPerPage = parsePositiveInteger(
+    pointsPerPageInput,
+    DEFAULT_CHART_PAGE_SIZE
+  );
+  const totalPages = Math.max(1, Math.ceil(allTimestamps.length / pointsPerPage));
   const visibleTimestampKeys = useMemo(() => {
-    const startIndex = (currentPage - 1) * CHART_PAGE_SIZE;
-    return allTimestamps.slice(startIndex, startIndex + CHART_PAGE_SIZE);
-  }, [allTimestamps, currentPage]);
+    const startIndex = (currentPage - 1) * pointsPerPage;
+    return allTimestamps.slice(startIndex, startIndex + pointsPerPage);
+  }, [allTimestamps, currentPage, pointsPerPage]);
   const visibleTimestampSet = useMemo(
     () => new Set(visibleTimestampKeys),
     [visibleTimestampKeys]
@@ -280,6 +287,12 @@ export default function ChartPage() {
   function goToNextPage() {
     setCrosshair(null);
     setCurrentPage((page) => Math.min(totalPages, page + 1));
+  }
+
+  function handlePointsPerPageChange(value: string) {
+    setPointsPerPageInput(value);
+    setCrosshair(null);
+    setCurrentPage(1);
   }
 
   function handlePlotMouseMove(event: React.MouseEvent<SVGRectElement>) {
@@ -407,13 +420,49 @@ export default function ChartPage() {
         }
         actions={
           visibleSeries.length > 0 ? (
-            <PaginationControls
-              currentPage={currentPage}
-              totalPages={totalPages}
-              summary={buildPageSummary(allTimestamps.length, currentPage, CHART_PAGE_SIZE)}
-              onPrevious={goToPreviousPage}
-              onNext={goToNextPage}
-            />
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "0.75rem",
+                justifyContent: "flex-end",
+              }}
+            >
+              {popupMode ? (
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.55rem",
+                    color: "#cbd5e1",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  <span>Points per page</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={pointsPerPageInput}
+                    onChange={(event) => handlePointsPerPageChange(event.target.value)}
+                    style={{
+                      ...inputStyle,
+                      width: "7rem",
+                      padding: "0.55rem 0.75rem",
+                      fontSize: "0.9rem",
+                    }}
+                  />
+                </label>
+              ) : null}
+              <PaginationControls
+                currentPage={currentPage}
+                totalPages={totalPages}
+                summary={buildPageSummary(allTimestamps.length, currentPage, pointsPerPage)}
+                onPrevious={goToPreviousPage}
+                onNext={goToNextPage}
+              />
+            </div>
           ) : null
         }
       >
@@ -1008,6 +1057,15 @@ function buildPageSummary(totalTimestamps: number, currentPage: number, pageSize
   const endIndex = Math.min(totalTimestamps, currentPage * pageSize);
 
   return `Showing timestamps ${startIndex}-${endIndex} of ${totalTimestamps}`;
+}
+
+function parsePositiveInteger(value: string, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+
+  return Math.floor(parsed);
 }
 
 function getPopupChartConfig():
