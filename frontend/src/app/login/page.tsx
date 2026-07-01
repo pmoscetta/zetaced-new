@@ -170,7 +170,7 @@ export default function LoginPage() {
             label="Client"
             value={clientSlug}
             onChange={setClientSlug}
-            placeholder="arno"
+            placeholder="database"
             autoComplete="organization"
           />
           <Field
