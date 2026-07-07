@@ -162,6 +162,49 @@ export function appendStationSensorParams(
   }
 }
 
+export function mergeStationSelection(
+  selections: StationSensorSelectionMap,
+  stationId: number,
+  sensorIds: number[]
+): StationSensorSelectionMap {
+  const currentSensorIds = selections[stationId] ?? [];
+  const mergedSensorIds = dedupeNumbers([...currentSensorIds, ...sensorIds]);
+
+  if (mergedSensorIds.length === 0) {
+    const { [stationId]: _removed, ...rest } = selections;
+    return rest;
+  }
+
+  return {
+    ...selections,
+    [stationId]: mergedSensorIds,
+  };
+}
+
+export function removeStationSelection(
+  selections: StationSensorSelectionMap,
+  stationId: number
+): StationSensorSelectionMap {
+  const { [stationId]: _removed, ...rest } = selections;
+  return rest;
+}
+
+export function replaceStationSelection(
+  selections: StationSensorSelectionMap,
+  stationId: number,
+  sensorIds: number[]
+): StationSensorSelectionMap {
+  const nextSensorIds = dedupeNumbers(sensorIds);
+  if (nextSensorIds.length === 0) {
+    return removeStationSelection(selections, stationId);
+  }
+
+  return {
+    ...selections,
+    [stationId]: nextSensorIds,
+  };
+}
+
 function dedupeSensors(sensors: StationSensorOption[]): StationSensorOption[] {
   const sensorMap = new Map<number, StationSensorOption>();
 

@@ -13,10 +13,12 @@ import { fetchProtectedBlob, fetchProtectedJson, triggerBlobDownload } from "../
 import {
   appendStationSensorParams,
   buildSelectionsFromLegacyFilters,
+  getSelectedStationIds,
   getSelectedSensorIds,
   hasSelectedPairs,
+  mergeStationSelection,
   normalizeStationsWithSensors,
-  syncSelectionsForStations,
+  removeStationSelection,
   type StationSensorSelectionMap,
   type StationWithSensors,
 } from "../station-sensor-selection";
@@ -45,7 +47,8 @@ const DATA_PAGE_SIZE = 50;
 
 export default function DataPage() {
   const [stations, setStations] = useState<StationWithSensors[]>([]);
-  const [selectedStationIds, setSelectedStationIds] = useState<number[]>([]);
+  const [draftStationId, setDraftStationId] = useState<number | null>(null);
+  const [draftSensorIds, setDraftSensorIds] = useState<number[]>([]);
   const [selectedSensorsByStation, setSelectedSensorsByStation] =
     useState<StationSensorSelectionMap>({});
   const [dateFrom, setDateFrom] = useState<Date | null>(getDefaultDateFrom());
@@ -61,6 +64,10 @@ export default function DataPage() {
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
 
+  const selectedStationIds = useMemo(
+    () => getSelectedStationIds(selectedSensorsByStation),
+    [selectedSensorsByStation]
+  );
   const selectedSensorIds = useMemo(
     () => getSelectedSensorIds(selectedSensorsByStation),
     [selectedSensorsByStation]
@@ -74,7 +81,16 @@ export default function DataPage() {
         const stationPayload = await fetchProtectedJson<StationWithSensors[]>(
           "/stations?view=results"
         );
-        setStations(normalizeStationsWithSensors(stationPayload));
+        const normalizedStations = normalizeStationsWithSensors(stationPayload);
+        setStations(normalizedStations);
+        if (normalizedStations[0]) {
+          setDraftStationId(normalizedStations[0].station_id);
+          setDraftSensorIds(
+            normalizedStations[0].sensors
+              .slice(0, Math.min(3, normalizedStations[0].sensors.length))
+              .map((sensor) => sensor.sensor_type_id)
+          );
+        }
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
@@ -168,18 +184,22 @@ export default function DataPage() {
         ? String(filters.alignment_seconds)
         : alignmentSeconds;
 
-    const nextSelections =
-      filters.sensor_ids.length > 0
-        ? buildSelectionsFromLegacyFilters(stations, nextStationIds, nextSensorIds)
-        : syncSelectionsForStations(
-            stations,
-            nextStationIds,
-            selectedSensorsByStation,
-            nextSensorIds
-          );
+    const nextSelections = buildSelectionsFromLegacyFilters(
+      stations,
+      nextStationIds,
+      nextSensorIds
+    );
+    const nextDraftStationId = nextStationIds[0] ?? null;
+    const nextDraftStation =
+      stations.find((station) => station.station_id === nextDraftStationId) ?? null;
+    const nextDraftSensorIds =
+      nextDraftStation && nextSelections[nextDraftStation.station_id]
+        ? nextSelections[nextDraftStation.station_id]
+        : [];
 
-    setSelectedStationIds(nextStationIds);
     setSelectedSensorsByStation(nextSelections);
+    setDraftStationId(nextDraftStationId);
+    setDraftSensorIds(nextDraftSensorIds);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
     setAlignmentSeconds(nextAlignment);
@@ -240,10 +260,42 @@ export default function DataPage() {
     return params;
   }
 
-  function handleStationSelectionChange(nextStationIds: number[]) {
-    setSelectedStationIds(nextStationIds);
+  function handleDraftStationChange(nextStationId: number | null) {
+    setDraftStationId(nextStationId);
+
+    const nextStation =
+      stations.find((station) => station.station_id === nextStationId) ?? null;
+    if (!nextStation) {
+      setDraftSensorIds([]);
+      return;
+    }
+
+    const existingSensorIds = selectedSensorsByStation[nextStation.station_id] ?? [];
+    if (existingSensorIds.length > 0) {
+      setDraftSensorIds(existingSensorIds);
+      return;
+    }
+
+    setDraftSensorIds(
+      nextStation.sensors
+        .slice(0, Math.min(3, nextStation.sensors.length))
+        .map((sensor) => sensor.sensor_type_id)
+    );
+  }
+
+  function handleAddSelection() {
+    if (draftStationId == null || draftSensorIds.length === 0) {
+      return;
+    }
+
     setSelectedSensorsByStation((current) =>
-      syncSelectionsForStations(stations, nextStationIds, current, selectedSensorIds)
+      mergeStationSelection(current, draftStationId, draftSensorIds)
+    );
+  }
+
+  function handleRemoveStation(stationId: number) {
+    setSelectedSensorsByStation((current) =>
+      removeStationSelection(current, stationId)
     );
   }
 
@@ -305,22 +357,26 @@ export default function DataPage() {
               alignItems: "start",
             }}
           >
-            <MultiSelectField
+            <SelectField
               label="Stations"
               options={stations.map((station) => ({
                 value: station.station_id,
                 label: station.station_name,
               }))}
-              value={selectedStationIds}
-              onChange={handleStationSelectionChange}
+              value={draftStationId}
+              onChange={handleDraftStationChange}
               disabled={isBootstrapping}
             />
             <div style={{ gridColumn: "span 1" }}>
               <StationSensorAssignmentsField
                 stations={stations}
-                selectedStationIds={selectedStationIds}
-                value={selectedSensorsByStation}
-                onChange={setSelectedSensorsByStation}
+                draftStationId={draftStationId}
+                draftSensorIds={draftSensorIds}
+                selections={selectedSensorsByStation}
+                onDraftStationChange={handleDraftStationChange}
+                onDraftSensorChange={setDraftSensorIds}
+                onAddSelection={handleAddSelection}
+                onRemoveStation={handleRemoveStation}
                 disabled={isBootstrapping}
               />
             </div>
@@ -568,21 +624,21 @@ function Field({ label, type, value, onChange, min, max }: FieldProps) {
   );
 }
 
-type MultiSelectFieldProps = {
+type SelectFieldProps = {
   label: string;
   options: Array<{ value: number; label: string }>;
-  value: number[];
-  onChange: (value: number[]) => void;
+  value: number | null;
+  onChange: (value: number | null) => void;
   disabled?: boolean;
 };
 
-function MultiSelectField({
+function SelectField({
   label,
   options,
   value,
   onChange,
   disabled,
-}: MultiSelectFieldProps) {
+}: SelectFieldProps) {
   return (
     <label
       style={{
@@ -592,20 +648,16 @@ function MultiSelectField({
     >
       <span style={{ fontWeight: 600 }}>{label}</span>
       <select
-        multiple
         disabled={disabled}
-        value={value.map(String)}
+        value={value == null ? "" : String(value)}
         onChange={(event) => {
-          const selectedValues = Array.from(event.target.selectedOptions).map(
-            (option) => Number(option.value)
-          );
-          onChange(selectedValues);
+          onChange(event.target.value ? Number(event.target.value) : null);
         }}
         style={{
           ...inputStyle,
-          minHeight: "10rem",
         }}
       >
+        <option value="">Select a station</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}

@@ -24,10 +24,12 @@ import {
   appendStationSensorParams,
   buildSelectionsFromLegacyFilters,
   buildSelectionsFromPairStrings,
+  getSelectedStationIds,
   getSelectedSensorIds,
   hasSelectedPairs,
+  mergeStationSelection,
   normalizeStationsWithSensors,
-  syncSelectionsForStations,
+  removeStationSelection,
   type StationSensorSelectionMap,
   type StationWithSensors,
 } from "../station-sensor-selection";
@@ -70,7 +72,8 @@ const seriesColors = [
 export default function ChartPage() {
   const [popupMode, setPopupMode] = useState(false);
   const [stations, setStations] = useState<StationWithSensors[]>([]);
-  const [selectedStationIds, setSelectedStationIds] = useState<number[]>([]);
+  const [draftStationId, setDraftStationId] = useState<number | null>(null);
+  const [draftSensorIds, setDraftSensorIds] = useState<number[]>([]);
   const [selectedSensorsByStation, setSelectedSensorsByStation] =
     useState<StationSensorSelectionMap>({});
   const [dateFrom, setDateFrom] = useState<Date | null>(getDefaultDateFrom());
@@ -83,10 +86,15 @@ export default function ChartPage() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
+  const selectedStationIds = useMemo(
+    () => getSelectedStationIds(selectedSensorsByStation),
+    [selectedSensorsByStation]
+  );
   const selectedSensorIds = useMemo(
     () => getSelectedSensorIds(selectedSensorsByStation),
     [selectedSensorsByStation]
   );
+  const hasFilters = hasSelectedPairs(selectedSensorsByStation);
 
   useEffect(() => {
     async function loadPage() {
@@ -115,9 +123,13 @@ export default function ChartPage() {
           const popupStationIds = popupConfig.stationIds.length
             ? popupConfig.stationIds
             : Object.keys(popupSelections).map((stationId) => Number(stationId));
+          const popupDraftStationId = popupStationIds[0] ?? null;
+          const popupDraftSensorIds =
+            popupDraftStationId != null ? popupSelections[popupDraftStationId] ?? [] : [];
 
-          setSelectedStationIds(popupStationIds);
           setSelectedSensorsByStation(popupSelections);
+          setDraftStationId(popupDraftStationId);
+          setDraftSensorIds(popupDraftSensorIds);
           setDateFrom(popupConfig.dateFrom);
           setDateTo(popupConfig.dateTo);
 
@@ -136,26 +148,12 @@ export default function ChartPage() {
         }
 
         setPopupMode(false);
-        const defaultStationIds = stationOptions[0]
-          ? [stationOptions[0].station_id]
-          : [];
-        const defaultSelections =
-          stationOptions[0] && stationOptions[0].sensors.length > 0
-            ? {
-                [stationOptions[0].station_id]: stationOptions[0].sensors
-                  .slice(0, 3)
-                  .map((sensor) => sensor.sensor_type_id),
-              }
-            : {};
-
-        setSelectedStationIds(defaultStationIds);
-        setSelectedSensorsByStation(defaultSelections);
-
-        if (hasSelectedPairs(defaultSelections)) {
-          await loadChart(
-            defaultSelections,
-            getDefaultDateFrom(),
-            getDefaultDateTo()
+        if (stationOptions[0]) {
+          setDraftStationId(stationOptions[0].station_id);
+          setDraftSensorIds(
+            stationOptions[0].sensors
+              .slice(0, Math.min(3, stationOptions[0].sensors.length))
+              .map((sensor) => sensor.sensor_type_id)
           );
         }
       } catch (caughtError) {
@@ -294,18 +292,22 @@ export default function ChartPage() {
     const nextDateTo =
       parsedTo && !Number.isNaN(parsedTo.getTime()) ? parsedTo : dateTo;
 
-    const nextSelections =
-      filters.sensor_ids.length > 0
-        ? buildSelectionsFromLegacyFilters(stations, nextStationIds, nextSensorIds)
-        : syncSelectionsForStations(
-            stations,
-            nextStationIds,
-            selectedSensorsByStation,
-            nextSensorIds
-          );
+    const nextSelections = buildSelectionsFromLegacyFilters(
+      stations,
+      nextStationIds,
+      nextSensorIds
+    );
+    const nextDraftStationId = nextStationIds[0] ?? null;
+    const nextDraftStation =
+      stations.find((station) => station.station_id === nextDraftStationId) ?? null;
+    const nextDraftSensorIds =
+      nextDraftStation && nextSelections[nextDraftStation.station_id]
+        ? nextSelections[nextDraftStation.station_id]
+        : [];
 
-    setSelectedStationIds(nextStationIds);
     setSelectedSensorsByStation(nextSelections);
+    setDraftStationId(nextDraftStationId);
+    setDraftSensorIds(nextDraftSensorIds);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
 
@@ -373,10 +375,42 @@ export default function ChartPage() {
     );
   }
 
-  function handleStationSelectionChange(nextStationIds: number[]) {
-    setSelectedStationIds(nextStationIds);
+  function handleDraftStationChange(nextStationId: number | null) {
+    setDraftStationId(nextStationId);
+
+    const nextStation =
+      stations.find((station) => station.station_id === nextStationId) ?? null;
+    if (!nextStation) {
+      setDraftSensorIds([]);
+      return;
+    }
+
+    const existingSensorIds = selectedSensorsByStation[nextStation.station_id] ?? [];
+    if (existingSensorIds.length > 0) {
+      setDraftSensorIds(existingSensorIds);
+      return;
+    }
+
+    setDraftSensorIds(
+      nextStation.sensors
+        .slice(0, Math.min(3, nextStation.sensors.length))
+        .map((sensor) => sensor.sensor_type_id)
+    );
+  }
+
+  function handleAddSelection() {
+    if (draftStationId == null || draftSensorIds.length === 0) {
+      return;
+    }
+
     setSelectedSensorsByStation((current) =>
-      syncSelectionsForStations(stations, nextStationIds, current, selectedSensorIds)
+      mergeStationSelection(current, draftStationId, draftSensorIds)
+    );
+  }
+
+  function handleRemoveStation(stationId: number) {
+    setSelectedSensorsByStation((current) =>
+      removeStationSelection(current, stationId)
     );
   }
 
@@ -532,21 +566,25 @@ export default function ChartPage() {
                   "minmax(12rem, 1.1fr) minmax(14rem, 1.8fr) minmax(10rem, 1fr) minmax(10rem, 1fr)",
               }}
             >
-              <MultiSelectField
+              <SelectField
                 label="Stations"
                 options={stations.map((station) => ({
                   value: station.station_id,
                   label: station.station_name,
                 }))}
-                value={selectedStationIds}
-                onChange={handleStationSelectionChange}
+                value={draftStationId}
+                onChange={handleDraftStationChange}
                 disabled={isBootstrapping}
               />
               <StationSensorAssignmentsField
                 stations={stations}
-                selectedStationIds={selectedStationIds}
-                value={selectedSensorsByStation}
-                onChange={setSelectedSensorsByStation}
+                draftStationId={draftStationId}
+                draftSensorIds={draftSensorIds}
+                selections={selectedSensorsByStation}
+                onDraftStationChange={handleDraftStationChange}
+                onDraftSensorChange={setDraftSensorIds}
+                onAddSelection={handleAddSelection}
+                onRemoveStation={handleRemoveStation}
                 disabled={isBootstrapping}
               />
               <DateTimePickerField
@@ -572,12 +610,12 @@ export default function ChartPage() {
               <button
                 type="submit"
                 disabled={
-                  !hasSelectedPairs(selectedSensorsByStation) ||
+                  !hasFilters ||
                   isBootstrapping ||
                   isLoadingResults
                 }
                 style={buttonStyle(
-                  !hasSelectedPairs(selectedSensorsByStation) ||
+                  !hasFilters ||
                     isBootstrapping ||
                     isLoadingResults
                 )}
@@ -610,21 +648,21 @@ export default function ChartPage() {
   );
 }
 
-type MultiSelectFieldProps = {
+type SelectFieldProps = {
   label: string;
   options: Array<{ value: number; label: string }>;
-  value: number[];
-  onChange: (value: number[]) => void;
+  value: number | null;
+  onChange: (value: number | null) => void;
   disabled?: boolean;
 };
 
-function MultiSelectField({
+function SelectField({
   label,
   options,
   value,
   onChange,
   disabled,
-}: MultiSelectFieldProps) {
+}: SelectFieldProps) {
   return (
     <label
       style={{
@@ -634,20 +672,16 @@ function MultiSelectField({
     >
       <span style={{ fontWeight: 600 }}>{label}</span>
       <select
-        multiple
         disabled={disabled}
-        value={value.map(String)}
+        value={value == null ? "" : String(value)}
         onChange={(event) => {
-          const selectedValues = Array.from(event.target.selectedOptions).map(
-            (option) => Number(option.value)
-          );
-          onChange(selectedValues);
+          onChange(event.target.value ? Number(event.target.value) : null);
         }}
         style={{
           ...inputStyle,
-          minHeight: "10rem",
         }}
       >
+        <option value="">Select a station</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}

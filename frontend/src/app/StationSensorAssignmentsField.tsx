@@ -9,21 +9,31 @@ import type {
 
 type StationSensorAssignmentsFieldProps = {
   stations: StationWithSensors[];
-  selectedStationIds: number[];
-  value: StationSensorSelectionMap;
-  onChange: (value: StationSensorSelectionMap) => void;
+  draftStationId: number | null;
+  draftSensorIds: number[];
+  selections: StationSensorSelectionMap;
+  onDraftStationChange: (stationId: number | null) => void;
+  onDraftSensorChange: (sensorIds: number[]) => void;
+  onAddSelection: () => void;
+  onRemoveStation: (stationId: number) => void;
   disabled?: boolean;
 };
 
 export default function StationSensorAssignmentsField({
   stations,
-  selectedStationIds,
-  value,
-  onChange,
+  draftStationId,
+  draftSensorIds,
+  selections,
+  onDraftStationChange,
+  onDraftSensorChange,
+  onAddSelection,
+  onRemoveStation,
   disabled,
 }: StationSensorAssignmentsFieldProps) {
-  const selectedStations = selectedStationIds
-    .map((stationId) => stations.find((station) => station.station_id === stationId))
+  const draftStation =
+    stations.find((station) => station.station_id === draftStationId) ?? null;
+  const committedStations = Object.keys(selections)
+    .map((stationId) => stations.find((station) => station.station_id === Number(stationId)))
     .filter((station): station is StationWithSensors => Boolean(station));
 
   return (
@@ -34,15 +44,104 @@ export default function StationSensorAssignmentsField({
       }}
     >
       <div style={{ display: "grid", gap: "0.2rem" }}>
-        <span style={{ fontWeight: 600 }}>Sensors by station</span>
+        <span style={{ fontWeight: 600 }}>Add station and sensors</span>
         <span style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
-          Each station can use a different sensor selection.
+          Build the final query one station at a time, then run it only when the list below is complete.
         </span>
       </div>
 
-      {selectedStations.length === 0 ? (
-        <div style={emptyStateStyle}>Select one or more stations first.</div>
-      ) : (
+      <div
+        style={{
+          backgroundColor: "#0b1220",
+          border: "1px solid #24324a",
+          borderRadius: "0.85rem",
+          padding: "0.9rem",
+          display: "grid",
+          gap: "0.75rem",
+        }}
+      >
+        <label style={{ display: "grid", gap: "0.45rem" }}>
+          <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Station</span>
+          <select
+            disabled={disabled || stations.length === 0}
+            value={draftStationId == null ? "" : String(draftStationId)}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              onDraftStationChange(nextValue ? Number(nextValue) : null);
+            }}
+            style={selectStyle}
+          >
+            <option value="">Select a station</option>
+            {stations.map((station) => (
+              <option key={station.station_id} value={station.station_id}>
+                {station.station_name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: "grid", gap: "0.45rem" }}>
+          <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Sensors</span>
+          {draftStation ? (
+            <select
+              multiple
+              disabled={disabled || draftStation.sensors.length === 0}
+              value={draftSensorIds.map(String)}
+              onChange={(event) => {
+                const selectedValues = Array.from(
+                  event.target.selectedOptions
+                ).map((option) => Number(option.value));
+                onDraftSensorChange(selectedValues);
+              }}
+              style={{
+                ...selectStyle,
+                minHeight: "9rem",
+              }}
+            >
+              {draftStation.sensors.map((sensor) => (
+                <option
+                  key={`${draftStation.station_id}-${sensor.sensor_type_id}`}
+                  value={sensor.sensor_type_id}
+                >
+                  {sensor.sensor_name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div style={emptyStateStyle}>Select a station to load its sensors.</div>
+          )}
+        </label>
+
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.75rem",
+          }}
+        >
+          <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
+            {draftSensorIds.length} sensors selected for the current station
+          </span>
+          <button
+            type="button"
+            disabled={disabled || draftStationId == null || draftSensorIds.length === 0}
+            onClick={onAddSelection}
+            style={addButtonStyle(
+              Boolean(disabled || draftStationId == null || draftSensorIds.length === 0)
+            )}
+          >
+            Add
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gap: "0.4rem" }}>
+        <span style={{ fontWeight: 600 }}>Selections to run</span>
+        {committedStations.length === 0 ? (
+          <div style={emptyStateStyle}>No station-sensor combinations added yet.</div>
+        ) : (
         <div
           style={{
             display: "grid",
@@ -50,8 +149,11 @@ export default function StationSensorAssignmentsField({
             gridTemplateColumns: "repeat(auto-fit, minmax(16rem, 1fr))",
           }}
         >
-          {selectedStations.map((station) => {
-            const stationSensorIds = value[station.station_id] ?? [];
+          {committedStations.map((station) => {
+            const stationSensorIds = selections[station.station_id] ?? [];
+            const sensorLabels = station.sensors
+              .filter((sensor) => stationSensorIds.includes(sensor.sensor_type_id))
+              .map((sensor) => sensor.sensor_name);
 
             return (
               <div
@@ -86,73 +188,30 @@ export default function StationSensorAssignmentsField({
                       {station.station_name}
                     </strong>
                     <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
-                      {station.sensors.length} available sensors
+                      {stationSensorIds.length} sensors added
                     </span>
                   </div>
 
-                  <div style={{ display: "flex", gap: "0.45rem", flexShrink: 0 }}>
-                    <MiniButton
-                      label="All"
-                      disabled={disabled || station.sensors.length === 0}
-                      onClick={() => {
-                        onChange({
-                          ...value,
-                          [station.station_id]: station.sensors.map(
-                            (sensor) => sensor.sensor_type_id
-                          ),
-                        });
-                      }}
-                    />
-                    <MiniButton
-                      label="None"
-                      disabled={disabled}
-                      onClick={() => {
-                        onChange({
-                          ...value,
-                          [station.station_id]: [],
-                        });
-                      }}
-                    />
-                  </div>
+                  <MiniButton
+                    label="Remove"
+                    disabled={disabled}
+                    onClick={() => onRemoveStation(station.station_id)}
+                  />
                 </div>
 
-                {station.sensors.length === 0 ? (
-                  <div style={emptyStateStyle}>No visible sensors for this station.</div>
-                ) : (
-                  <select
-                    multiple
-                    disabled={disabled}
-                    value={stationSensorIds.map(String)}
-                    onChange={(event) => {
-                      const selectedValues = Array.from(
-                        event.target.selectedOptions
-                      ).map((option) => Number(option.value));
-
-                      onChange({
-                        ...value,
-                        [station.station_id]: selectedValues,
-                      });
-                    }}
-                    style={{
-                      ...selectStyle,
-                      minHeight: "9rem",
-                    }}
-                  >
-                    {station.sensors.map((sensor) => (
-                      <option
-                        key={`${station.station_id}-${sensor.sensor_type_id}`}
-                        value={sensor.sensor_type_id}
-                      >
-                        {sensor.sensor_name}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                  {sensorLabels.map((sensorLabel) => (
+                    <span key={`${station.station_id}-${sensorLabel}`} style={sensorChipStyle}>
+                      {sensorLabel}
+                    </span>
+                  ))}
+                </div>
               </div>
             );
           })}
         </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -196,6 +255,19 @@ const selectStyle: CSSProperties = {
   fontSize: "0.95rem",
 };
 
+function addButtonStyle(disabled: boolean): CSSProperties {
+  return {
+    border: "none",
+    backgroundColor: disabled ? "#1e293b" : "#0ea5e9",
+    color: disabled ? "#94a3b8" : "#08111d",
+    borderRadius: "0.65rem",
+    padding: "0.55rem 0.9rem",
+    fontSize: "0.9rem",
+    fontWeight: 700,
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
+}
+
 const emptyStateStyle: CSSProperties = {
   borderRadius: "0.85rem",
   border: "1px dashed #334155",
@@ -203,4 +275,13 @@ const emptyStateStyle: CSSProperties = {
   color: "#94a3b8",
   padding: "0.9rem 1rem",
   fontSize: "0.92rem",
+};
+
+const sensorChipStyle: CSSProperties = {
+  borderRadius: "999px",
+  backgroundColor: "#162235",
+  border: "1px solid #334155",
+  color: "#cbd5e1",
+  padding: "0.3rem 0.65rem",
+  fontSize: "0.82rem",
 };
