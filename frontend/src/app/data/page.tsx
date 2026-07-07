@@ -47,7 +47,7 @@ const DATA_PAGE_SIZE = 50;
 
 export default function DataPage() {
   const [stations, setStations] = useState<StationWithSensors[]>([]);
-  const [draftStationId, setDraftStationId] = useState<number | null>(null);
+  const [draftStationIds, setDraftStationIds] = useState<number[]>([]);
   const [draftSensorIds, setDraftSensorIds] = useState<number[]>([]);
   const [selectedSensorsByStation, setSelectedSensorsByStation] =
     useState<StationSensorSelectionMap>({});
@@ -84,7 +84,7 @@ export default function DataPage() {
         const normalizedStations = normalizeStationsWithSensors(stationPayload);
         setStations(normalizedStations);
         if (normalizedStations[0]) {
-          setDraftStationId(normalizedStations[0].station_id);
+          setDraftStationIds([normalizedStations[0].station_id]);
           setDraftSensorIds(
             normalizedStations[0].sensors
               .slice(0, Math.min(3, normalizedStations[0].sensors.length))
@@ -189,16 +189,13 @@ export default function DataPage() {
       nextStationIds,
       nextSensorIds
     );
-    const nextDraftStationId = nextStationIds[0] ?? null;
-    const nextDraftStation =
-      stations.find((station) => station.station_id === nextDraftStationId) ?? null;
-    const nextDraftSensorIds =
-      nextDraftStation && nextSelections[nextDraftStation.station_id]
-        ? nextSelections[nextDraftStation.station_id]
-        : [];
+    const nextDraftStationIds = nextStationIds.slice(0, 1);
+    const nextDraftSensorIds = nextDraftStationIds[0]
+      ? nextSelections[nextDraftStationIds[0]] ?? []
+      : [];
 
     setSelectedSensorsByStation(nextSelections);
-    setDraftStationId(nextDraftStationId);
+    setDraftStationIds(nextDraftStationIds);
     setDraftSensorIds(nextDraftSensorIds);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
@@ -260,37 +257,59 @@ export default function DataPage() {
     return params;
   }
 
-  function handleDraftStationChange(nextStationId: number | null) {
-    setDraftStationId(nextStationId);
+  function handleDraftStationChange(nextStationIds: number[]) {
+    setDraftStationIds(nextStationIds);
 
-    const nextStation =
-      stations.find((station) => station.station_id === nextStationId) ?? null;
-    if (!nextStation) {
+    if (nextStationIds.length === 0) {
       setDraftSensorIds([]);
       return;
     }
 
-    const existingSensorIds = selectedSensorsByStation[nextStation.station_id] ?? [];
-    if (existingSensorIds.length > 0) {
-      setDraftSensorIds(existingSensorIds);
+    const commonSelectedSensorIds = nextStationIds.reduce<number[] | null>(
+      (accumulator, stationId) => {
+        const stationSensorIds = selectedSensorsByStation[stationId] ?? [];
+        if (accumulator === null) {
+          return stationSensorIds;
+        }
+
+        return accumulator.filter((sensorId) => stationSensorIds.includes(sensorId));
+      },
+      null
+    );
+
+    if (commonSelectedSensorIds && commonSelectedSensorIds.length > 0) {
+      setDraftSensorIds(commonSelectedSensorIds);
       return;
     }
 
+    const sharedSensors = stations
+      .filter((station) => nextStationIds.includes(station.station_id))
+      .reduce<number[]>((accumulator, station, index) => {
+        const stationSensorIds = station.sensors.map((sensor) => sensor.sensor_type_id);
+        if (index === 0) {
+          return stationSensorIds;
+        }
+
+        return accumulator.filter((sensorId) => stationSensorIds.includes(sensorId));
+      }, []);
+
     setDraftSensorIds(
-      nextStation.sensors
-        .slice(0, Math.min(3, nextStation.sensors.length))
-        .map((sensor) => sensor.sensor_type_id)
+      sharedSensors.slice(0, Math.min(3, sharedSensors.length))
     );
   }
 
   function handleAddSelection() {
-    if (draftStationId == null || draftSensorIds.length === 0) {
+    if (draftStationIds.length === 0 || draftSensorIds.length === 0) {
       return;
     }
 
-    setSelectedSensorsByStation((current) =>
-      mergeStationSelection(current, draftStationId, draftSensorIds)
-    );
+    setSelectedSensorsByStation((current) => {
+      let nextSelections = current;
+      for (const stationId of draftStationIds) {
+        nextSelections = mergeStationSelection(nextSelections, stationId, draftSensorIds);
+      }
+      return nextSelections;
+    });
   }
 
   function handleRemoveStation(stationId: number) {
@@ -352,23 +371,11 @@ export default function DataPage() {
             style={{
               display: "grid",
               gap: "1rem",
-              gridTemplateColumns: "minmax(0, 2.2fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) minmax(8rem, 0.7fr)",
+              gridTemplateColumns: "minmax(11rem, 0.95fr) minmax(11rem, 0.95fr) minmax(8rem, 0.7fr)",
               alignItems: "start",
+              justifyContent: "start",
             }}
           >
-            <div style={{ gridColumn: "1 / 2" }}>
-              <StationSensorAssignmentsField
-                stations={stations}
-                draftStationId={draftStationId}
-                draftSensorIds={draftSensorIds}
-                selections={selectedSensorsByStation}
-                onDraftStationChange={handleDraftStationChange}
-                onDraftSensorChange={setDraftSensorIds}
-                onAddSelection={handleAddSelection}
-                onRemoveStation={handleRemoveStation}
-                disabled={isBootstrapping}
-              />
-            </div>
             <DateTimePickerField
               label="From"
               selected={dateFrom}
@@ -388,6 +395,18 @@ export default function DataPage() {
               max="3600"
             />
           </div>
+
+          <StationSensorAssignmentsField
+            stations={stations}
+            draftStationIds={draftStationIds}
+            draftSensorIds={draftSensorIds}
+            selections={selectedSensorsByStation}
+            onDraftStationChange={handleDraftStationChange}
+            onDraftSensorChange={setDraftSensorIds}
+            onAddSelection={handleAddSelection}
+            onRemoveStation={handleRemoveStation}
+            disabled={isBootstrapping}
+          />
 
           <div
             style={{

@@ -72,7 +72,7 @@ const seriesColors = [
 export default function ChartPage() {
   const [popupMode, setPopupMode] = useState(false);
   const [stations, setStations] = useState<StationWithSensors[]>([]);
-  const [draftStationId, setDraftStationId] = useState<number | null>(null);
+  const [draftStationIds, setDraftStationIds] = useState<number[]>([]);
   const [draftSensorIds, setDraftSensorIds] = useState<number[]>([]);
   const [selectedSensorsByStation, setSelectedSensorsByStation] =
     useState<StationSensorSelectionMap>({});
@@ -123,12 +123,14 @@ export default function ChartPage() {
           const popupStationIds = popupConfig.stationIds.length
             ? popupConfig.stationIds
             : Object.keys(popupSelections).map((stationId) => Number(stationId));
-          const popupDraftStationId = popupStationIds[0] ?? null;
+          const popupDraftStationIds = popupStationIds.slice(0, 1);
           const popupDraftSensorIds =
-            popupDraftStationId != null ? popupSelections[popupDraftStationId] ?? [] : [];
+            popupDraftStationIds[0] != null
+              ? popupSelections[popupDraftStationIds[0]] ?? []
+              : [];
 
           setSelectedSensorsByStation(popupSelections);
-          setDraftStationId(popupDraftStationId);
+          setDraftStationIds(popupDraftStationIds);
           setDraftSensorIds(popupDraftSensorIds);
           setDateFrom(popupConfig.dateFrom);
           setDateTo(popupConfig.dateTo);
@@ -149,7 +151,7 @@ export default function ChartPage() {
 
         setPopupMode(false);
         if (stationOptions[0]) {
-          setDraftStationId(stationOptions[0].station_id);
+          setDraftStationIds([stationOptions[0].station_id]);
           setDraftSensorIds(
             stationOptions[0].sensors
               .slice(0, Math.min(3, stationOptions[0].sensors.length))
@@ -297,16 +299,13 @@ export default function ChartPage() {
       nextStationIds,
       nextSensorIds
     );
-    const nextDraftStationId = nextStationIds[0] ?? null;
-    const nextDraftStation =
-      stations.find((station) => station.station_id === nextDraftStationId) ?? null;
-    const nextDraftSensorIds =
-      nextDraftStation && nextSelections[nextDraftStation.station_id]
-        ? nextSelections[nextDraftStation.station_id]
-        : [];
+    const nextDraftStationIds = nextStationIds.slice(0, 1);
+    const nextDraftSensorIds = nextDraftStationIds[0]
+      ? nextSelections[nextDraftStationIds[0]] ?? []
+      : [];
 
     setSelectedSensorsByStation(nextSelections);
-    setDraftStationId(nextDraftStationId);
+    setDraftStationIds(nextDraftStationIds);
     setDraftSensorIds(nextDraftSensorIds);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
@@ -375,37 +374,59 @@ export default function ChartPage() {
     );
   }
 
-  function handleDraftStationChange(nextStationId: number | null) {
-    setDraftStationId(nextStationId);
+  function handleDraftStationChange(nextStationIds: number[]) {
+    setDraftStationIds(nextStationIds);
 
-    const nextStation =
-      stations.find((station) => station.station_id === nextStationId) ?? null;
-    if (!nextStation) {
+    if (nextStationIds.length === 0) {
       setDraftSensorIds([]);
       return;
     }
 
-    const existingSensorIds = selectedSensorsByStation[nextStation.station_id] ?? [];
-    if (existingSensorIds.length > 0) {
-      setDraftSensorIds(existingSensorIds);
+    const commonSelectedSensorIds = nextStationIds.reduce<number[] | null>(
+      (accumulator, stationId) => {
+        const stationSensorIds = selectedSensorsByStation[stationId] ?? [];
+        if (accumulator === null) {
+          return stationSensorIds;
+        }
+
+        return accumulator.filter((sensorId) => stationSensorIds.includes(sensorId));
+      },
+      null
+    );
+
+    if (commonSelectedSensorIds && commonSelectedSensorIds.length > 0) {
+      setDraftSensorIds(commonSelectedSensorIds);
       return;
     }
 
+    const sharedSensors = stations
+      .filter((station) => nextStationIds.includes(station.station_id))
+      .reduce<number[]>((accumulator, station, index) => {
+        const stationSensorIds = station.sensors.map((sensor) => sensor.sensor_type_id);
+        if (index === 0) {
+          return stationSensorIds;
+        }
+
+        return accumulator.filter((sensorId) => stationSensorIds.includes(sensorId));
+      }, []);
+
     setDraftSensorIds(
-      nextStation.sensors
-        .slice(0, Math.min(3, nextStation.sensors.length))
-        .map((sensor) => sensor.sensor_type_id)
+      sharedSensors.slice(0, Math.min(3, sharedSensors.length))
     );
   }
 
   function handleAddSelection() {
-    if (draftStationId == null || draftSensorIds.length === 0) {
+    if (draftStationIds.length === 0 || draftSensorIds.length === 0) {
       return;
     }
 
-    setSelectedSensorsByStation((current) =>
-      mergeStationSelection(current, draftStationId, draftSensorIds)
-    );
+    setSelectedSensorsByStation((current) => {
+      let nextSelections = current;
+      for (const stationId of draftStationIds) {
+        nextSelections = mergeStationSelection(nextSelections, stationId, draftSensorIds);
+      }
+      return nextSelections;
+    });
   }
 
   function handleRemoveStation(stationId: number) {
@@ -563,22 +584,10 @@ export default function ChartPage() {
                 display: "grid",
                 gap: "1rem",
                 gridTemplateColumns:
-                  "minmax(0, 2.2fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr)",
+                  "minmax(11rem, 0.95fr) minmax(11rem, 0.95fr)",
+                justifyContent: "start",
               }}
             >
-              <div style={{ gridColumn: "1 / 2" }}>
-                <StationSensorAssignmentsField
-                  stations={stations}
-                  draftStationId={draftStationId}
-                  draftSensorIds={draftSensorIds}
-                  selections={selectedSensorsByStation}
-                  onDraftStationChange={handleDraftStationChange}
-                  onDraftSensorChange={setDraftSensorIds}
-                  onAddSelection={handleAddSelection}
-                  onRemoveStation={handleRemoveStation}
-                  disabled={isBootstrapping}
-                />
-              </div>
               <DateTimePickerField
                 label="From"
                 selected={dateFrom}
@@ -590,6 +599,18 @@ export default function ChartPage() {
                 onChange={setDateTo}
               />
             </div>
+
+            <StationSensorAssignmentsField
+              stations={stations}
+              draftStationIds={draftStationIds}
+              draftSensorIds={draftSensorIds}
+              selections={selectedSensorsByStation}
+              onDraftStationChange={handleDraftStationChange}
+              onDraftSensorChange={setDraftSensorIds}
+              onAddSelection={handleAddSelection}
+              onRemoveStation={handleRemoveStation}
+              disabled={isBootstrapping}
+            />
 
             <div
               style={{

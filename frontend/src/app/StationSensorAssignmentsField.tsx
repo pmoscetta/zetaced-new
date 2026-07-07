@@ -9,10 +9,10 @@ import type {
 
 type StationSensorAssignmentsFieldProps = {
   stations: StationWithSensors[];
-  draftStationId: number | null;
+  draftStationIds: number[];
   draftSensorIds: number[];
   selections: StationSensorSelectionMap;
-  onDraftStationChange: (stationId: number | null) => void;
+  onDraftStationChange: (stationIds: number[]) => void;
   onDraftSensorChange: (sensorIds: number[]) => void;
   onAddSelection: () => void;
   onRemoveStation: (stationId: number) => void;
@@ -21,7 +21,7 @@ type StationSensorAssignmentsFieldProps = {
 
 export default function StationSensorAssignmentsField({
   stations,
-  draftStationId,
+  draftStationIds,
   draftSensorIds,
   selections,
   onDraftStationChange,
@@ -30,8 +30,19 @@ export default function StationSensorAssignmentsField({
   onRemoveStation,
   disabled,
 }: StationSensorAssignmentsFieldProps) {
-  const draftStation =
-    stations.find((station) => station.station_id === draftStationId) ?? null;
+  const sharedSensors = stations
+    .filter((station) => draftStationIds.includes(station.station_id))
+    .reduce<StationWithSensors["sensors"]>((accumulator, station, index) => {
+      if (index === 0) {
+        return station.sensors;
+      }
+
+      return accumulator.filter((sensor) =>
+        station.sensors.some(
+          (candidate) => candidate.sensor_type_id === sensor.sensor_type_id
+        )
+      );
+    }, []);
   const committedStations = Object.keys(selections)
     .map((stationId) => stations.find((station) => station.station_id === Number(stationId)))
     .filter((station): station is StationWithSensors => Boolean(station));
@@ -41,6 +52,8 @@ export default function StationSensorAssignmentsField({
       style={{
         display: "grid",
         gap: "1rem",
+        gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 1fr)",
+        alignItems: "start",
       }}
     >
       <div
@@ -56,7 +69,7 @@ export default function StationSensorAssignmentsField({
         <div style={{ display: "grid", gap: "0.2rem" }}>
           <span style={{ fontWeight: 600, color: "#f8fafc" }}>Station and sensors</span>
           <span style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
-            Choose one station, pick its sensors, then use `Add` to append them to the final query.
+            Choose one or more stations, pick sensors shared by them, then use `Add` to append the same group to all selected stations.
           </span>
         </div>
 
@@ -64,22 +77,27 @@ export default function StationSensorAssignmentsField({
           style={{
             display: "grid",
             gap: "0.9rem",
-            gridTemplateColumns: "minmax(12rem, 0.9fr) minmax(0, 1.6fr)",
+            gridTemplateColumns: "minmax(13rem, 1fr) minmax(0, 1.35fr)",
             alignItems: "start",
           }}
         >
           <label style={{ display: "grid", gap: "0.45rem" }}>
             <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Station</span>
             <select
+              multiple
               disabled={disabled || stations.length === 0}
-              value={draftStationId == null ? "" : String(draftStationId)}
+              value={draftStationIds.map(String)}
               onChange={(event) => {
-                const nextValue = event.target.value;
-                onDraftStationChange(nextValue ? Number(nextValue) : null);
+                const nextValues = Array.from(event.target.selectedOptions).map(
+                  (option) => Number(option.value)
+                );
+                onDraftStationChange(nextValues);
               }}
-              style={selectStyle}
+              style={{
+                ...selectStyle,
+                minHeight: "10.5rem",
+              }}
             >
-              <option value="">Select a station</option>
               {stations.map((station) => (
                 <option key={station.station_id} value={station.station_id}>
                   {station.station_name}
@@ -90,10 +108,10 @@ export default function StationSensorAssignmentsField({
 
           <label style={{ display: "grid", gap: "0.45rem" }}>
             <span style={{ color: "#cbd5e1", fontWeight: 600 }}>Sensors</span>
-            {draftStation ? (
+            {draftStationIds.length > 0 ? (
               <select
                 multiple
-                disabled={disabled || draftStation.sensors.length === 0}
+                disabled={disabled || sharedSensors.length === 0}
                 value={draftSensorIds.map(String)}
                 onChange={(event) => {
                   const selectedValues = Array.from(
@@ -106,9 +124,9 @@ export default function StationSensorAssignmentsField({
                   minHeight: "10.5rem",
                 }}
               >
-                {draftStation.sensors.map((sensor) => (
+                {sharedSensors.map((sensor) => (
                   <option
-                    key={`${draftStation.station_id}-${sensor.sensor_type_id}`}
+                    key={sensor.sensor_type_id}
                     value={sensor.sensor_type_id}
                   >
                     {sensor.sensor_name}
@@ -116,7 +134,7 @@ export default function StationSensorAssignmentsField({
                 ))}
               </select>
             ) : (
-              <div style={emptyStateStyle}>Select a station to load its sensors.</div>
+              <div style={emptyStateStyle}>Select one or more stations to load shared sensors.</div>
             )}
           </label>
         </div>
@@ -132,14 +150,14 @@ export default function StationSensorAssignmentsField({
           }}
         >
           <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
-            {draftSensorIds.length} sensors selected for the current station
+            {draftStationIds.length} stations and {draftSensorIds.length} sensors selected
           </span>
           <button
             type="button"
-            disabled={disabled || draftStationId == null || draftSensorIds.length === 0}
+            disabled={disabled || draftStationIds.length === 0 || draftSensorIds.length === 0}
             onClick={onAddSelection}
             style={addButtonStyle(
-              Boolean(disabled || draftStationId == null || draftSensorIds.length === 0)
+              Boolean(disabled || draftStationIds.length === 0 || draftSensorIds.length === 0)
             )}
           >
             Add
@@ -171,6 +189,7 @@ export default function StationSensorAssignmentsField({
               border: "1px solid #24324a",
               borderRadius: "0.8rem",
               overflow: "hidden",
+              minHeight: "100%",
             }}
           >
             {committedStations.map((station, index) => {
