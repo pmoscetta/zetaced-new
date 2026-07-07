@@ -16,6 +16,7 @@ router = APIRouter(tags=["data"])
 def get_data(
     station_ids: list[int] = Query(default_factory=list),
     sensor_ids: list[int] = Query(default_factory=list),
+    station_sensor_pairs: list[str] = Query(default_factory=list),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     alignment_seconds: int = Query(default=300, ge=0, le=3600),
@@ -24,6 +25,7 @@ def get_data(
     params = DataQueryParams(
         station_ids=station_ids,
         sensor_ids=sensor_ids,
+        station_sensor_pairs=station_sensor_pairs,
         date_from=date_from,
         date_to=date_to,
         alignment_seconds=alignment_seconds,
@@ -35,6 +37,7 @@ def get_data(
 def export_csv(
     station_ids: list[int] = Query(default_factory=list),
     sensor_ids: list[int] = Query(default_factory=list),
+    station_sensor_pairs: list[str] = Query(default_factory=list),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     alignment_seconds: int = Query(default=300, ge=0, le=3600),
@@ -44,6 +47,7 @@ def export_csv(
     params = DataQueryParams(
         station_ids=station_ids,
         sensor_ids=sensor_ids,
+        station_sensor_pairs=station_sensor_pairs,
         date_from=date_from,
         date_to=date_to,
         alignment_seconds=alignment_seconds,
@@ -63,6 +67,7 @@ def export_csv(
 def export_pdf(
     station_ids: list[int] = Query(default_factory=list),
     sensor_ids: list[int] = Query(default_factory=list),
+    station_sensor_pairs: list[str] = Query(default_factory=list),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     alignment_seconds: int = Query(default=300, ge=0, le=3600),
@@ -71,6 +76,7 @@ def export_pdf(
     params = DataQueryParams(
         station_ids=station_ids,
         sensor_ids=sensor_ids,
+        station_sensor_pairs=station_sensor_pairs,
         date_from=date_from,
         date_to=date_to,
         alignment_seconds=alignment_seconds,

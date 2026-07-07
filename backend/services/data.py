@@ -150,6 +150,17 @@ def _fetch_sensor_instances(
     params: DataQueryParams,
     user_level: int,
 ) -> dict[int, dict[str, Any]]:
+    selected_pairs = _parse_station_sensor_pairs(params.station_sensor_pairs)
+    selected_station_ids = (
+        sorted({station_id for station_id, _ in selected_pairs})
+        if selected_pairs
+        else params.station_ids
+    )
+    selected_sensor_ids = (
+        sorted({sensor_type_id for _, sensor_type_id in selected_pairs})
+        if selected_pairs
+        else params.sensor_ids
+    )
     sql = """
         SELECT
             sensor.id AS sensor_instance_id,
@@ -168,15 +179,15 @@ def _fetch_sensor_instances(
     """
     query_params: list[Any] = []
 
-    if params.station_ids:
-        placeholders = ", ".join(["%s"] * len(params.station_ids))
+    if selected_station_ids:
+        placeholders = ", ".join(["%s"] * len(selected_station_ids))
         sql += f" AND sensor.station_id IN ({placeholders})"
-        query_params.extend(params.station_ids)
+        query_params.extend(selected_station_ids)
 
-    if params.sensor_ids:
-        placeholders = ", ".join(["%s"] * len(params.sensor_ids))
+    if selected_sensor_ids:
+        placeholders = ", ".join(["%s"] * len(selected_sensor_ids))
         sql += f" AND sensor.sensor_id IN ({placeholders})"
-        query_params.extend(params.sensor_ids)
+        query_params.extend(selected_sensor_ids)
 
     sql += " ORDER BY sensor.station_id ASC, sensor.sensor_id ASC, sensor.id ASC"
 
@@ -198,6 +209,14 @@ def _fetch_sensor_instances(
         if row.get("sensor_instance_id") is not None
         and row.get("station_id") is not None
         and row.get("sensor_type_id") is not None
+        and (
+            not selected_pairs
+            or (
+                int(row["station_id"]),
+                int(row["sensor_type_id"]),
+            )
+            in selected_pairs
+        )
         and _is_visible_for_level(row.get(RESULTS_VISIBILITY_FIELD), user_level)
     }
 
@@ -338,6 +357,27 @@ def _to_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_station_sensor_pairs(
+    raw_pairs: list[str],
+) -> set[tuple[int, int]]:
+    parsed_pairs: set[tuple[int, int]] = set()
+
+    for raw_pair in raw_pairs:
+        try:
+            station_part, sensor_part = raw_pair.split(":", maxsplit=1)
+        except ValueError:
+            continue
+
+        station_id = _to_int(station_part)
+        sensor_type_id = _to_int(sensor_part)
+        if station_id is None or sensor_type_id is None:
+            continue
+
+        parsed_pairs.add((station_id, sensor_type_id))
+
+    return parsed_pairs
 
 
 def _parse_recorded_at(

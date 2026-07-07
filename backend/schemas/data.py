@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class DataQueryParams(BaseModel):
     station_ids: list[int] = Field(default_factory=list)
     sensor_ids: list[int] = Field(default_factory=list)
+    station_sensor_pairs: list[str] = Field(default_factory=list)
     date_from: datetime | None = None
     date_to: datetime | None = None
     alignment_seconds: int = Field(default=300, ge=0, le=3600)

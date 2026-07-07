@@ -18,17 +18,19 @@ import AppShell from "../AppShell";
 import DateTimePickerField from "../DateTimePickerField";
 import PaginationControls from "../PaginationControls";
 import PageSection from "../PageSection";
+import StationSensorAssignmentsField from "../StationSensorAssignmentsField";
 import { fetchProtectedJson } from "../protected-api";
-
-type StationOption = {
-  station_id: number;
-  station_name: string;
-};
-
-type SensorOption = {
-  sensor_type_id: number;
-  sensor_name: string;
-};
+import {
+  appendStationSensorParams,
+  buildSelectionsFromLegacyFilters,
+  buildSelectionsFromPairStrings,
+  getSelectedSensorIds,
+  hasSelectedPairs,
+  normalizeStationsWithSensors,
+  syncSelectionsForStations,
+  type StationSensorSelectionMap,
+  type StationWithSensors,
+} from "../station-sensor-selection";
 
 type ChartPoint = {
   timestamp: string;
@@ -67,10 +69,10 @@ const seriesColors = [
 
 export default function ChartPage() {
   const [popupMode, setPopupMode] = useState(false);
-  const [stations, setStations] = useState<StationOption[]>([]);
-  const [sensors, setSensors] = useState<SensorOption[]>([]);
+  const [stations, setStations] = useState<StationWithSensors[]>([]);
   const [selectedStationIds, setSelectedStationIds] = useState<number[]>([]);
-  const [selectedSensorIds, setSelectedSensorIds] = useState<number[]>([]);
+  const [selectedSensorsByStation, setSelectedSensorsByStation] =
+    useState<StationSensorSelectionMap>({});
   const [dateFrom, setDateFrom] = useState<Date | null>(getDefaultDateFrom());
   const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [results, setResults] = useState<ChartResponse | null>(null);
@@ -81,28 +83,52 @@ export default function ChartPage() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
+  const selectedSensorIds = useMemo(
+    () => getSelectedSensorIds(selectedSensorsByStation),
+    [selectedSensorsByStation]
+  );
 
   useEffect(() => {
     async function loadPage() {
       try {
         setError("");
+        const stationPayload = await fetchProtectedJson<StationWithSensors[]>(
+          "/stations?view=results"
+        );
+        const stationOptions = normalizeStationsWithSensors(stationPayload);
+        setStations(stationOptions);
+
         const popupConfig = getPopupChartConfig();
         if (popupConfig) {
           setPopupMode(true);
-          setSelectedStationIds(popupConfig.stationIds);
-          setSelectedSensorIds(popupConfig.sensorIds);
+          const popupSelections =
+            popupConfig.stationSensorPairs.length > 0
+              ? buildSelectionsFromPairStrings(
+                  stationOptions,
+                  popupConfig.stationSensorPairs
+                )
+              : buildSelectionsFromLegacyFilters(
+                  stationOptions,
+                  popupConfig.stationIds,
+                  popupConfig.sensorIds
+                );
+          const popupStationIds = popupConfig.stationIds.length
+            ? popupConfig.stationIds
+            : Object.keys(popupSelections).map((stationId) => Number(stationId));
+
+          setSelectedStationIds(popupStationIds);
+          setSelectedSensorsByStation(popupSelections);
           setDateFrom(popupConfig.dateFrom);
           setDateTo(popupConfig.dateTo);
 
-          if (popupConfig.stationIds.length === 0 || popupConfig.sensorIds.length === 0) {
+          if (!hasSelectedPairs(popupSelections)) {
             setResults(null);
             setError("Missing chart filters.");
             return;
           }
 
           await loadChart(
-            popupConfig.stationIds,
-            popupConfig.sensorIds,
+            popupSelections,
             popupConfig.dateFrom,
             popupConfig.dateTo
           );
@@ -110,38 +136,24 @@ export default function ChartPage() {
         }
 
         setPopupMode(false);
-        const [stationPayload, sensorPayload] = await Promise.all([
-          fetchProtectedJson<
-            Array<{
-              station_id: number;
-              station_name: string;
-            }>
-          >("/stations?view=results"),
-          fetchProtectedJson<SensorOption[]>("/sensors?view=results"),
-        ]);
-
-        const stationOptions = stationPayload.map((station) => ({
-          station_id: station.station_id,
-          station_name: station.station_name,
-        }));
-
-        setStations(stationOptions);
-        setSensors(sensorPayload);
-
         const defaultStationIds = stationOptions[0]
           ? [stationOptions[0].station_id]
           : [];
-        const defaultSensorIds = sensorPayload
-          .slice(0, 3)
-          .map((sensor) => sensor.sensor_type_id);
+        const defaultSelections =
+          stationOptions[0] && stationOptions[0].sensors.length > 0
+            ? {
+                [stationOptions[0].station_id]: stationOptions[0].sensors
+                  .slice(0, 3)
+                  .map((sensor) => sensor.sensor_type_id),
+              }
+            : {};
 
         setSelectedStationIds(defaultStationIds);
-        setSelectedSensorIds(defaultSensorIds);
+        setSelectedSensorsByStation(defaultSelections);
 
-        if (defaultStationIds.length > 0 && defaultSensorIds.length > 0) {
+        if (hasSelectedPairs(defaultSelections)) {
           await loadChart(
-            defaultStationIds,
-            defaultSensorIds,
+            defaultSelections,
             getDefaultDateFrom(),
             getDefaultDateTo()
           );
@@ -220,12 +232,11 @@ export default function ChartPage() {
   );
 
   async function loadChart(
-    stationIds: number[],
-    sensorIds: number[],
+    stationSelections: StationSensorSelectionMap,
     requestedDateFrom: Date | null,
     requestedDateTo: Date | null
   ) {
-    if (stationIds.length === 0 || sensorIds.length === 0) {
+    if (!hasSelectedPairs(stationSelections)) {
       setResults(null);
       setCurrentPage(1);
       setHiddenSeriesKeys([]);
@@ -236,12 +247,7 @@ export default function ChartPage() {
 
     try {
       const params = new URLSearchParams();
-      stationIds.forEach((stationId) => {
-        params.append("station_ids", String(stationId));
-      });
-      sensorIds.forEach((sensorId) => {
-        params.append("sensor_ids", String(sensorId));
-      });
+      appendStationSensorParams(params, stationSelections);
       if (requestedDateFrom) {
         params.set("date_from", requestedDateFrom.toISOString());
       }
@@ -272,7 +278,7 @@ export default function ChartPage() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await loadChart(selectedStationIds, selectedSensorIds, dateFrom, dateTo);
+    await loadChart(selectedSensorsByStation, dateFrom, dateTo);
   }
 
   const applyChatFiltersRef = useRef<(filters: ChatFilters) => void>(() => {});
@@ -288,12 +294,22 @@ export default function ChartPage() {
     const nextDateTo =
       parsedTo && !Number.isNaN(parsedTo.getTime()) ? parsedTo : dateTo;
 
+    const nextSelections =
+      filters.sensor_ids.length > 0
+        ? buildSelectionsFromLegacyFilters(stations, nextStationIds, nextSensorIds)
+        : syncSelectionsForStations(
+            stations,
+            nextStationIds,
+            selectedSensorsByStation,
+            nextSensorIds
+          );
+
     setSelectedStationIds(nextStationIds);
-    setSelectedSensorIds(nextSensorIds);
+    setSelectedSensorsByStation(nextSelections);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
 
-    void loadChart(nextStationIds, nextSensorIds, nextDateFrom, nextDateTo);
+    void loadChart(nextSelections, nextDateFrom, nextDateTo);
   };
 
   useEffect(() => {
@@ -354,6 +370,13 @@ export default function ChartPage() {
       current.includes(seriesKey)
         ? current.filter((entry) => entry !== seriesKey)
         : [...current, seriesKey]
+    );
+  }
+
+  function handleStationSelectionChange(nextStationIds: number[]) {
+    setSelectedStationIds(nextStationIds);
+    setSelectedSensorsByStation((current) =>
+      syncSelectionsForStations(stations, nextStationIds, current, selectedSensorIds)
     );
   }
 
@@ -448,6 +471,24 @@ export default function ChartPage() {
       </div>
     </div>
   );
+  const seriesSection = hasSeries ? seriesCards : null;
+  const chartSectionContent =
+    !results ? (
+      <StateBox text="Choose at least one station-sensor combination, then load the chart." />
+    ) : !hasSeries ? (
+      <StateBox text="No chart points were returned for the current filter set." />
+    ) : (
+      <div style={{ display: "grid", gap: "1rem" }}>
+        {!hasEnabledSeries ? (
+          <StateBox text="All sensor series are disabled. Re-enable at least one checkbox below." />
+        ) : !hasPagedPoints ? (
+          <StateBox text="No chart points fall inside the current page window." />
+        ) : (
+          chartCanvas
+        )}
+        {seriesSection}
+      </div>
+    );
 
   if (popupMode) {
     return (
@@ -464,15 +505,8 @@ export default function ChartPage() {
             <StateBox text="Missing chart filters." />
           ) : !hasSeries ? (
             <StateBox text="No chart points were returned for the current filter set." />
-          ) : !hasEnabledSeries ? (
-            <StateBox text="All sensor series are disabled. Re-enable at least one checkbox below." />
-          ) : !hasPagedPoints ? (
-            <StateBox text="No chart points fall inside the current page window." />
           ) : (
-            <div style={{ display: "grid", gap: "1rem" }}>
-              {chartCanvas}
-              {seriesCards}
-            </div>
+            chartSectionContent
           )}
         </div>
       </main>
@@ -494,7 +528,8 @@ export default function ChartPage() {
               style={{
                 display: "grid",
                 gap: "1rem",
-                gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
+                gridTemplateColumns:
+                  "minmax(12rem, 1.1fr) minmax(14rem, 1.8fr) minmax(10rem, 1fr) minmax(10rem, 1fr)",
               }}
             >
               <MultiSelectField
@@ -504,17 +539,14 @@ export default function ChartPage() {
                   label: station.station_name,
                 }))}
                 value={selectedStationIds}
-                onChange={setSelectedStationIds}
+                onChange={handleStationSelectionChange}
                 disabled={isBootstrapping}
               />
-              <MultiSelectField
-                label="Sensors"
-                options={sensors.map((sensor) => ({
-                  value: sensor.sensor_type_id,
-                  label: sensor.sensor_name,
-                }))}
-                value={selectedSensorIds}
-                onChange={setSelectedSensorIds}
+              <StationSensorAssignmentsField
+                stations={stations}
+                selectedStationIds={selectedStationIds}
+                value={selectedSensorsByStation}
+                onChange={setSelectedSensorsByStation}
                 disabled={isBootstrapping}
               />
               <DateTimePickerField
@@ -540,14 +572,12 @@ export default function ChartPage() {
               <button
                 type="submit"
                 disabled={
-                  selectedStationIds.length === 0 ||
-                  selectedSensorIds.length === 0 ||
+                  !hasSelectedPairs(selectedSensorsByStation) ||
                   isBootstrapping ||
                   isLoadingResults
                 }
                 style={buttonStyle(
-                  selectedStationIds.length === 0 ||
-                    selectedSensorIds.length === 0 ||
+                  !hasSelectedPairs(selectedSensorsByStation) ||
                     isBootstrapping ||
                     isLoadingResults
                 )}
@@ -572,19 +602,8 @@ export default function ChartPage() {
           <StateBox text="Loading chart filters..." />
         ) : error ? (
           <StateBox text={error} tone="error" />
-        ) : !results ? (
-          <StateBox text="Choose at least one station and one sensor, then load the chart." />
-        ) : !hasSeries ? (
-          <StateBox text="No chart points were returned for the current filter set." />
-        ) : !hasEnabledSeries ? (
-          <StateBox text="All sensor series are disabled. Re-enable at least one checkbox below." />
-        ) : !hasPagedPoints ? (
-          <StateBox text="No chart points fall inside the current page window." />
         ) : (
-          <div style={{ display: "grid", gap: "1rem" }}>
-            {chartCanvas}
-            {seriesCards}
-          </div>
+          chartSectionContent
         )}
       </PageSection>
     </AppShell>
@@ -890,6 +909,7 @@ function getPopupChartConfig():
   | {
       stationIds: number[];
       sensorIds: number[];
+      stationSensorPairs: string[];
       dateFrom: Date | null;
       dateTo: Date | null;
     }
@@ -912,6 +932,7 @@ function getPopupChartConfig():
       .getAll("sensor_ids")
       .map((value) => Number(value))
       .filter((value) => Number.isFinite(value)),
+    stationSensorPairs: searchParams.getAll("station_sensor_pairs"),
     dateFrom: toDateFromIso(searchParams.get("date_from")),
     dateTo: toDateFromIso(searchParams.get("date_to")),
   };

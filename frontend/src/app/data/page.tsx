@@ -8,17 +8,18 @@ import AppShell from "../AppShell";
 import DateTimePickerField from "../DateTimePickerField";
 import PaginationControls from "../PaginationControls";
 import PageSection from "../PageSection";
+import StationSensorAssignmentsField from "../StationSensorAssignmentsField";
 import { fetchProtectedBlob, fetchProtectedJson, triggerBlobDownload } from "../protected-api";
-
-type StationOption = {
-  station_id: number;
-  station_name: string;
-};
-
-type SensorOption = {
-  sensor_type_id: number;
-  sensor_name: string;
-};
+import {
+  appendStationSensorParams,
+  buildSelectionsFromLegacyFilters,
+  getSelectedSensorIds,
+  hasSelectedPairs,
+  normalizeStationsWithSensors,
+  syncSelectionsForStations,
+  type StationSensorSelectionMap,
+  type StationWithSensors,
+} from "../station-sensor-selection";
 
 type DataColumn = {
   column_key: string;
@@ -43,10 +44,10 @@ type DataResponse = {
 const DATA_PAGE_SIZE = 50;
 
 export default function DataPage() {
-  const [stations, setStations] = useState<StationOption[]>([]);
-  const [sensors, setSensors] = useState<SensorOption[]>([]);
+  const [stations, setStations] = useState<StationWithSensors[]>([]);
   const [selectedStationIds, setSelectedStationIds] = useState<number[]>([]);
-  const [selectedSensorIds, setSelectedSensorIds] = useState<number[]>([]);
+  const [selectedSensorsByStation, setSelectedSensorsByStation] =
+    useState<StationSensorSelectionMap>({});
   const [dateFrom, setDateFrom] = useState<Date | null>(getDefaultDateFrom());
   const [dateTo, setDateTo] = useState<Date | null>(getDefaultDateTo());
   const [alignmentSeconds, setAlignmentSeconds] = useState("300");
@@ -60,29 +61,20 @@ export default function DataPage() {
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [error, setError] = useState("");
 
-  const hasFilters = selectedStationIds.length > 0 && selectedSensorIds.length > 0;
+  const selectedSensorIds = useMemo(
+    () => getSelectedSensorIds(selectedSensorsByStation),
+    [selectedSensorsByStation]
+  );
+  const hasFilters = hasSelectedPairs(selectedSensorsByStation);
 
   useEffect(() => {
     async function loadMetadata() {
       try {
         setError("");
-        const [stationPayload, sensorPayload] = await Promise.all([
-          fetchProtectedJson<
-            Array<{
-              station_id: number;
-              station_name: string;
-            }>
-          >("/stations?view=results"),
-          fetchProtectedJson<SensorOption[]>("/sensors?view=results"),
-        ]);
-
-        const stationOptions = stationPayload.map((station) => ({
-          station_id: station.station_id,
-          station_name: station.station_name,
-        }));
-
-        setStations(stationOptions);
-        setSensors(sensorPayload);
+        const stationPayload = await fetchProtectedJson<StationWithSensors[]>(
+          "/stations?view=results"
+        );
+        setStations(normalizeStationsWithSensors(stationPayload));
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
@@ -106,13 +98,12 @@ export default function DataPage() {
   }, [allRows, currentPage]);
 
   async function loadData(
-    stationIds: number[],
-    sensorIds: number[],
+    stationSelections: StationSensorSelectionMap,
     requestedDateFrom: Date | null,
     requestedDateTo: Date | null,
     requestedAlignmentSeconds: string
   ) {
-    if (stationIds.length === 0 || sensorIds.length === 0) {
+    if (!hasSelectedPairs(stationSelections)) {
       setResults(null);
       setCurrentPage(1);
       return;
@@ -122,12 +113,7 @@ export default function DataPage() {
 
     try {
       const params = new URLSearchParams();
-      stationIds.forEach((stationId) => {
-        params.append("station_ids", String(stationId));
-      });
-      sensorIds.forEach((sensorId) => {
-        params.append("sensor_ids", String(sensorId));
-      });
+      appendStationSensorParams(params, stationSelections);
       if (requestedDateFrom) {
         params.set("date_from", requestedDateFrom.toISOString());
       }
@@ -158,8 +144,7 @@ export default function DataPage() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await loadData(
-      selectedStationIds,
-      selectedSensorIds,
+      selectedSensorsByStation,
       dateFrom,
       dateTo,
       alignmentSeconds
@@ -183,15 +168,24 @@ export default function DataPage() {
         ? String(filters.alignment_seconds)
         : alignmentSeconds;
 
+    const nextSelections =
+      filters.sensor_ids.length > 0
+        ? buildSelectionsFromLegacyFilters(stations, nextStationIds, nextSensorIds)
+        : syncSelectionsForStations(
+            stations,
+            nextStationIds,
+            selectedSensorsByStation,
+            nextSensorIds
+          );
+
     setSelectedStationIds(nextStationIds);
-    setSelectedSensorIds(nextSensorIds);
+    setSelectedSensorsByStation(nextSelections);
     setDateFrom(nextDateFrom);
     setDateTo(nextDateTo);
     setAlignmentSeconds(nextAlignment);
 
     void loadData(
-      nextStationIds,
-      nextSensorIds,
+      nextSelections,
       nextDateFrom,
       nextDateTo,
       nextAlignment
@@ -218,12 +212,7 @@ export default function DataPage() {
     }
 
     const params = new URLSearchParams();
-    selectedStationIds.forEach((stationId) => {
-      params.append("station_ids", String(stationId));
-    });
-    selectedSensorIds.forEach((sensorId) => {
-      params.append("sensor_ids", String(sensorId));
-    });
+    appendStationSensorParams(params, selectedSensorsByStation);
     if (dateFrom) {
       params.set("date_from", dateFrom.toISOString());
     }
@@ -244,12 +233,18 @@ export default function DataPage() {
 
   function buildExportParams() {
     const params = new URLSearchParams();
-    selectedStationIds.forEach((id) => params.append("station_ids", String(id)));
-    selectedSensorIds.forEach((id) => params.append("sensor_ids", String(id)));
+    appendStationSensorParams(params, selectedSensorsByStation);
     if (dateFrom) params.set("date_from", dateFrom.toISOString());
     if (dateTo) params.set("date_to", dateTo.toISOString());
     params.set("alignment_seconds", alignmentSeconds || "300");
     return params;
+  }
+
+  function handleStationSelectionChange(nextStationIds: number[]) {
+    setSelectedStationIds(nextStationIds);
+    setSelectedSensorsByStation((current) =>
+      syncSelectionsForStations(stations, nextStationIds, current, selectedSensorIds)
+    );
   }
 
   async function handleExportCsv() {
@@ -305,7 +300,8 @@ export default function DataPage() {
             style={{
               display: "grid",
               gap: "1rem",
-              gridTemplateColumns: "minmax(11rem, 1.8fr) minmax(11rem, 1.8fr) minmax(10rem, 1fr) minmax(10rem, 1fr) minmax(7rem, 0.55fr)",
+              gridTemplateColumns:
+                "minmax(11rem, 1.3fr) minmax(12rem, 1.7fr) minmax(10rem, 1fr) minmax(10rem, 1fr) minmax(7rem, 0.55fr)",
               alignItems: "start",
             }}
           >
@@ -316,19 +312,18 @@ export default function DataPage() {
                 label: station.station_name,
               }))}
               value={selectedStationIds}
-              onChange={setSelectedStationIds}
+              onChange={handleStationSelectionChange}
               disabled={isBootstrapping}
             />
-            <MultiSelectField
-              label="Sensors"
-              options={sensors.map((sensor) => ({
-                value: sensor.sensor_type_id,
-                label: sensor.sensor_name,
-              }))}
-              value={selectedSensorIds}
-              onChange={setSelectedSensorIds}
-              disabled={isBootstrapping}
-            />
+            <div style={{ gridColumn: "span 1" }}>
+              <StationSensorAssignmentsField
+                stations={stations}
+                selectedStationIds={selectedStationIds}
+                value={selectedSensorsByStation}
+                onChange={setSelectedSensorsByStation}
+                disabled={isBootstrapping}
+              />
+            </div>
             <DateTimePickerField
               label="From"
               selected={dateFrom}
@@ -437,7 +432,7 @@ export default function DataPage() {
           <StateBox text={error} tone="error" />
         ) : !results ? (
           <StateBox
-            text="Choose at least one station and one sensor, then run the query."
+            text="Choose at least one station-sensor combination, then run the query."
           />
         ) : visibleRows.length === 0 ? (
           <StateBox text="No aligned rows were returned for the current filter set." />
