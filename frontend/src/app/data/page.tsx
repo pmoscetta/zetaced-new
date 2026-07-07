@@ -345,29 +345,18 @@ export default function DataPage() {
           onSubmit={handleSubmit}
           style={{
             display: "grid",
-            gap: "1rem",
+            gap: "1.1rem",
           }}
         >
           <div
             style={{
               display: "grid",
               gap: "1rem",
-              gridTemplateColumns:
-                "minmax(11rem, 1.3fr) minmax(12rem, 1.7fr) minmax(10rem, 1fr) minmax(10rem, 1fr) minmax(7rem, 0.55fr)",
+              gridTemplateColumns: "minmax(0, 2.2fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr) minmax(8rem, 0.7fr)",
               alignItems: "start",
             }}
           >
-            <SelectField
-              label="Stations"
-              options={stations.map((station) => ({
-                value: station.station_id,
-                label: station.station_name,
-              }))}
-              value={draftStationId}
-              onChange={handleDraftStationChange}
-              disabled={isBootstrapping}
-            />
-            <div style={{ gridColumn: "span 1" }}>
+            <div style={{ gridColumn: "1 / 2" }}>
               <StationSensorAssignmentsField
                 stations={stations}
                 draftStationId={draftStationId}
@@ -620,50 +609,6 @@ function Field({ label, type, value, onChange, min, max }: FieldProps) {
         onChange={(event) => onChange(event.target.value)}
         style={inputStyle}
       />
-    </label>
-  );
-}
-
-type SelectFieldProps = {
-  label: string;
-  options: Array<{ value: number; label: string }>;
-  value: number | null;
-  onChange: (value: number | null) => void;
-  disabled?: boolean;
-};
-
-function SelectField({
-  label,
-  options,
-  value,
-  onChange,
-  disabled,
-}: SelectFieldProps) {
-  return (
-    <label
-      style={{
-        display: "grid",
-        gap: "0.45rem",
-      }}
-    >
-      <span style={{ fontWeight: 600 }}>{label}</span>
-      <select
-        disabled={disabled}
-        value={value == null ? "" : String(value)}
-        onChange={(event) => {
-          onChange(event.target.value ? Number(event.target.value) : null);
-        }}
-        style={{
-          ...inputStyle,
-        }}
-      >
-        <option value="">Select a station</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
     </label>
   );
 }

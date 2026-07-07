@@ -555,7 +555,7 @@ export default function ChartPage() {
             onSubmit={handleSubmit}
             style={{
               display: "grid",
-              gap: "1rem",
+              gap: "1.1rem",
             }}
           >
             <div
@@ -563,30 +563,22 @@ export default function ChartPage() {
                 display: "grid",
                 gap: "1rem",
                 gridTemplateColumns:
-                  "minmax(12rem, 1.1fr) minmax(14rem, 1.8fr) minmax(10rem, 1fr) minmax(10rem, 1fr)",
+                  "minmax(0, 2.2fr) minmax(11rem, 0.9fr) minmax(11rem, 0.9fr)",
               }}
             >
-              <SelectField
-                label="Stations"
-                options={stations.map((station) => ({
-                  value: station.station_id,
-                  label: station.station_name,
-                }))}
-                value={draftStationId}
-                onChange={handleDraftStationChange}
-                disabled={isBootstrapping}
-              />
-              <StationSensorAssignmentsField
-                stations={stations}
-                draftStationId={draftStationId}
-                draftSensorIds={draftSensorIds}
-                selections={selectedSensorsByStation}
-                onDraftStationChange={handleDraftStationChange}
-                onDraftSensorChange={setDraftSensorIds}
-                onAddSelection={handleAddSelection}
-                onRemoveStation={handleRemoveStation}
-                disabled={isBootstrapping}
-              />
+              <div style={{ gridColumn: "1 / 2" }}>
+                <StationSensorAssignmentsField
+                  stations={stations}
+                  draftStationId={draftStationId}
+                  draftSensorIds={draftSensorIds}
+                  selections={selectedSensorsByStation}
+                  onDraftStationChange={handleDraftStationChange}
+                  onDraftSensorChange={setDraftSensorIds}
+                  onAddSelection={handleAddSelection}
+                  onRemoveStation={handleRemoveStation}
+                  disabled={isBootstrapping}
+                />
+              </div>
               <DateTimePickerField
                 label="From"
                 selected={dateFrom}
@@ -645,50 +637,6 @@ export default function ChartPage() {
         )}
       </PageSection>
     </AppShell>
-  );
-}
-
-type SelectFieldProps = {
-  label: string;
-  options: Array<{ value: number; label: string }>;
-  value: number | null;
-  onChange: (value: number | null) => void;
-  disabled?: boolean;
-};
-
-function SelectField({
-  label,
-  options,
-  value,
-  onChange,
-  disabled,
-}: SelectFieldProps) {
-  return (
-    <label
-      style={{
-        display: "grid",
-        gap: "0.45rem",
-      }}
-    >
-      <span style={{ fontWeight: 600 }}>{label}</span>
-      <select
-        disabled={disabled}
-        value={value == null ? "" : String(value)}
-        onChange={(event) => {
-          onChange(event.target.value ? Number(event.target.value) : null);
-        }}
-        style={{
-          ...inputStyle,
-        }}
-      >
-        <option value="">Select a station</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }
 
